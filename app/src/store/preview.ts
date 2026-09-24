@@ -415,7 +415,6 @@ export function newBrowserTab() {
 }
 
 export function closeRightRailTab(tabId: string) {
-export function closeActiveRightRailTab(tabId?: string) { if (tabId) closeRightRailTab(tabId); else closeRightRail() }
   const current = $previewTabs.get()
   const index = current.findIndex(tab => tab.id === tabId)
 
@@ -469,8 +468,6 @@ export function closePreviewMatching(...candidates: string[]): boolean {
 /** Artifact tabs can't outlive the registry they read from, so clearing it
  *  closes them. File and URL tabs re-read from their source and are left alone. */
 export function closeArtifactPreviewTabs() {
-export function registerSessionPreview(sessionId: string, tabId: string) {}
-export function clearSessionPreviewRegistry(sessionId: string) {}
   for (const tab of $previewTabs.get()) {
     if (tab.target.kind === 'artifact') {
       closeRightRailTab(tab.id)

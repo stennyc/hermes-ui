@@ -11,7 +11,7 @@
  * injection payload) stay off the boot path until a tour actually runs.
  */
 
-import 'driver.js/dist/driver.css'
+import './driver.css'
 import './app-tour.css'
 
 import { driver as driverFactory } from 'driver.js'

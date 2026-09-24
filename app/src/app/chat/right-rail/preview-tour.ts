@@ -15,8 +15,8 @@
  * the boot path.
  */
 
-import driverCss from 'driver.js/dist/driver.css?raw'
-import driverIife from 'driver.js/dist/driver.js.iife.js?raw'
+import driverCss from '@/assets/driver/driver.css?raw'
+import driverIife from '@/assets/driver/driver.js.iife.js?raw'
 
 import { collectTourTargets } from '@/lib/tour/collect-targets'
 import { runTourEngine, type TourAction, type TourResult } from '@/lib/tour/engine'
