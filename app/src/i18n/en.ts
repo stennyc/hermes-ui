@@ -2675,12 +2675,3 @@ export const en: Translations = {
       previous: 'Prev',
       previousAria: 'Go to previous page',
       next: 'Next',
-      nextAria: 'Go to next page'
-    },
-    sidebar: {
-      title: 'Sidebar',
-      description: 'Displays the mobile sidebar.',
-      toggle: 'Toggle Sidebar'
-    }
-  }
-}
