@@ -26,9 +26,10 @@ import type {
   DesktopConnectionConfigInput,
   DesktopOauthLoginResult,
   HermesApiRequest,
-  HermesConnection,
-  HermesNotification
+  HermesConnection
 } from '@/global'
+
+import type { HermesNotification } from '@/electron/notification-types'
 
 import {
   activeUpstreamOrigin,

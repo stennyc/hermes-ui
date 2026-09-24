@@ -35,23 +35,6 @@ const COMMON_CODE_LANGUAGES = new Set([
   'yml'
 ])
 
-// Fence tags that do NOT pin a code presentation: '' is an unlabelled fence,
-// and md/markdown is the well-known artifact of a model wrapping its whole
-// prose reply in a fence. These stay eligible for prose demotion. Everything
-// else that we recognize ('text', 'plain', 'diff', real code languages) is
-// explicit author intent and must keep its code-card rendering.
-const PROSE_WRAP_FENCE_LANGUAGES = new Set(['', 'md', 'markdown'])
-
-/** True when a sanitized tag names a recognized language that pins the fence
- * as intentional code/preformatted content (never prose-demotable). */
-export function isExplicitFenceLanguage(cleanLanguage: string): boolean {
-  return (
-    Boolean(cleanLanguage) &&
-    !PROSE_WRAP_FENCE_LANGUAGES.has(cleanLanguage) &&
-    (NON_CODE_FENCE_LANGUAGES.has(cleanLanguage) || COMMON_CODE_LANGUAGES.has(cleanLanguage))
-  )
-}
-
 interface CodeSignals {
   bulletLines: number
   codeSignals: number
@@ -290,6 +273,69 @@ function codeSignals(body: string): CodeSignals {
   }
 }
 
+// A sentence-ending punctuation mark followed by whitespace or end-of-line.
+// Real wrapped prose has these; config/structured listings almost never do.
+const SENTENCE_PUNCTUATION_RE = /[.!?](?:\s|$)/
+// `Key: value` / `Key = value` — a settings/directive line with an explicit
+// separator. Unambiguous config shape.
+const CONFIG_SEPARATOR_LINE_RE = /^[A-Za-z0-9_][\w.-]*\s*[:=]\s*\S/
+// A bare identifier that could be a config key (`Host`, `Port`, `HostName`,
+// `API_KEY`). Used only for the short `Key value` directive form below.
+const CONFIG_KEY_RE = /^[A-Za-z0-9_][\w.-]*$/
+
+// True when a single line looks like a config directive rather than prose.
+// Either an explicit `Key: value` / `Key = value`, or a short whitespace
+// directive of 2-3 tokens led by an identifier (`Host example`, `Port 22`,
+// `HostName 10.0.0.1`). The token cap is what separates it from prose — a
+// real sentence line has more words than a config directive, so a
+// punctuation-less prose fragment like `the quick brown fox jumps` (5 tokens)
+// is NOT treated as config.
+function isConfigDirectiveLine(line: string): boolean {
+  const trimmed = line.trim()
+
+  if (CONFIG_SEPARATOR_LINE_RE.test(trimmed)) {
+    return true
+  }
+
+  const tokens = trimmed.split(/\s+/)
+
+  return tokens.length >= 2 && tokens.length <= 3 && CONFIG_KEY_RE.test(tokens[0])
+}
+
+/**
+ * True when a fenced block looks like structured / config / tabular text
+ * rather than wrapped prose. Such blocks (SSH config, .env dumps, INI-style
+ * settings, key/value listings) trip the prose heuristics' "3+ plain lines,
+ * no JS/SQL tokens" rule and get their fence stripped — rendering as a flat
+ * paragraph instead of a code block. This veto keeps them fenced.
+ *
+ * Two signals, biased toward keeping the fence when ambiguous:
+ *   - ANY indented continuation line (leading whitespace before content):
+ *     prose is not indented line-by-line, but config stanzas are
+ *     (`Host x` / `    HostName y`).
+ *   - No sentence-ending punctuation AND a majority of lines are
+ *     `Key value` / `Key: value` directives (see isConfigDirectiveLine).
+ */
+export function isLikelyStructuredText(body: string): boolean {
+  const lines = body.split('\n').filter(line => line.trim())
+
+  if (lines.length < 2) {
+    return false
+  }
+
+  if (lines.some(line => /^\s+\S/.test(line))) {
+    return true
+  }
+
+  if (lines.some(line => SENTENCE_PUNCTUATION_RE.test(line.trim()))) {
+    return false
+  }
+
+  const configLines = lines.filter(line => isConfigDirectiveLine(line)).length
+
+  return configLines >= Math.max(2, Math.ceil(lines.length * 0.6))
+}
+
 export function isLikelyProseFence(info: string, body: string): boolean {
   const trimmedInfo = info.trim()
   const rawInfo = trimmedInfo.toLowerCase()
@@ -315,10 +361,14 @@ export function isLikelyProseFence(info: string, body: string): boolean {
     return true
   }
 
-  // A bare recognized tag ('text', 'diff', 'ts', ...) pins the presentation;
-  // only unlabelled fences and the md/markdown wrap artifact fall through to
-  // the prose-signal heuristics.
-  if (!PROSE_WRAP_FENCE_LANGUAGES.has(language)) {
+  if (!NON_CODE_FENCE_LANGUAGES.has(language)) {
+    return false
+  }
+
+  // Config / key-value / indented listings are not prose — keep their fence
+  // so an SSH config, .env, or INI block renders as a code block instead of
+  // being unwrapped into a paragraph.
+  if (isLikelyStructuredText(body)) {
     return false
   }
 
@@ -330,26 +380,23 @@ export function isLikelyProseFence(info: string, body: string): boolean {
 
 export function isLikelyProseCodeBlock(language: string | undefined, code: string | undefined): boolean {
   const cleanLanguage = sanitizeLanguageTag(language || '')
-
-  // An explicit recognized language is author intent. Its contents may look
-  // like prose: `text` can contain a list of unit names and `diff` necessarily
-  // starts removed lines with `-`, which resembles Markdown bullets. Do not
-  // discard the requested code presentation; the heuristics below are only for
-  // unlabelled fences, unknown tags, and the md/markdown wrap artifact.
-  // (Checked before codeSignals so labelled fences skip the regex scans - this
-  // runs on every streaming re-render.)
-  if (isExplicitFenceLanguage(cleanLanguage)) {
-    return false
-  }
-
   const signals = codeSignals(code || '')
 
   if (!signals.trimmed || signals.codeSignals >= 3) {
     return false
   }
 
+  // A bullet list with markdown emphasis is prose even when it happens to be
+  // structured; the config veto below is only meant to protect config/kv
+  // listings, so let the bullet-prose case win first.
   if (signals.bulletLines >= 1 && (signals.hasMarkdown || signals.proseLines >= 2)) {
     return true
+  }
+
+  // Config / key-value / indented listings are code, not prose — never
+  // unwrap them (SSH config, .env, INI, key/value tables).
+  if (isLikelyStructuredText(code || '')) {
+    return false
   }
 
   if (NON_CODE_FENCE_LANGUAGES.has(cleanLanguage)) {

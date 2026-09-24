@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 
 import { SETTINGS_ROUTE } from '@/app/routes'
 import { Codicon } from '@/components/ui/codicon'

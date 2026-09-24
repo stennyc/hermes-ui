@@ -5,9 +5,8 @@ import { BrandMark } from '@/components/brand-mark'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { type Translations, useI18n } from '@/i18n'
-import { CheckCircle2, ExternalLink, Loader2, RefreshCw } from '@/lib/icons'
+import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, RefreshCw } from '@/lib/icons'
 import { cn } from '@/lib/utils'
-import { supportsAppAutoUpdate, supportsUninstall } from '@/lib/web-platform'
 import {
   $desktopVersion,
   $updateApply,
@@ -23,6 +22,7 @@ import { ListRow, SectionHeading, SettingsContent } from './primitives'
 import { UninstallSection } from './uninstall-section'
 
 const RELEASE_NOTES_URL = 'https://github.com/NousResearch/hermes-agent/releases'
+const INSTALLER_URL = 'https://hermes-agent.nousresearch.com/'
 
 function relativeTime(ms: number | undefined, a: Translations['settings']['about']) {
   if (!ms) {
@@ -64,12 +64,15 @@ export function AboutSettings() {
   }, [])
 
   const behind = status?.behind ?? 0
+  // behind is null when the exact count is unknowable (shallow clone): the
+  // backend flags that case via updateAvailable instead of a number.
+  const updateAvailable = behind > 0 || Boolean(status?.updateAvailable)
   const supported = status?.supported !== false
   const applying = apply.applying || apply.stage === 'restart'
 
   const handleCheck = async () => {
     setJustChecked(false)
-    const next = await checkUpdates()
+    const next = await checkUpdates({ force: true })
     setJustChecked(Boolean(next))
   }
 
@@ -80,13 +83,13 @@ export function AboutSettings() {
     statusLine = status?.message ?? a.cantUpdate
     statusTone = 'error'
   } else if (status?.error) {
-    statusLine = a.cantReach
+    statusLine = status.message ? `${a.cantReach} ${status.message}` : a.cantReach
     statusTone = 'error'
   } else if (applying) {
     statusLine = a.installing
     statusTone = 'available'
-  } else if (behind > 0) {
-    statusLine = a.updateReady(behind)
+  } else if (updateAvailable) {
+    statusLine = behind > 0 ? a.updateReady(behind) : a.updateReadyUnknown
     statusTone = 'available'
   } else if (status) {
     statusLine = a.onLatest
@@ -104,87 +107,128 @@ export function AboutSettings() {
             {version?.appVersion ? a.version(version.appVersion) : a.versionUnavailable}
           </p>
         </div>
-      </div>
-
-      <div className="mx-auto mt-4 w-full max-w-2xl">
-        {/* App self-update is Electron-only; the web build can't update its own
-            client (updates.check resolves {supported:false}), so hide the whole
-            check-for-updates section instead of showing a "Can't update" box. */}
-        {supportsAppAutoUpdate() && (
-          <>
-            <SectionHeading icon={RefreshCw} title={a.updates} />
-
-            <div
-              className={cn(
-                'rounded-xl border px-4 py-3 text-sm',
-                statusTone === 'available' && 'border-primary/30 bg-primary/5 text-foreground',
-                statusTone === 'error' && 'border-destructive/35 bg-destructive/5 text-destructive',
-                statusTone === 'idle' && 'border-border/70 bg-muted/20 text-foreground'
-              )}
-            >
-              <div className="flex items-start gap-2">
-                {statusTone === 'available' ? (
-                  <Codicon className="mt-0.5 size-4 shrink-0 text-primary" name="cloud-download" size="1rem" />
-                ) : statusTone === 'error' ? null : (
-                  <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                )}
-                <div className="min-w-0">
-                  <p className="font-medium">{statusLine}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {a.lastChecked(relativeTime(status?.fetchedAt, a))}
-                    {justChecked && !checking ? a.justNowSuffix : ''}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-3 flex flex-wrap items-center gap-4">
-                <Button
-                  disabled={checking || applying || !supported}
-                  onClick={() => void handleCheck()}
-                  size="sm"
-                  variant="textStrong"
-                >
-                  {checking ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
-                  {checking ? a.checking : a.checkNow}
-                </Button>
-
-                {behind > 0 && supported && !applying && (
+        {(version?.bundleOutOfSync || version?.bundleSwapPending) && (
+          <div className="mx-auto w-full max-w-2xl rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-left text-sm">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+              <div className="min-w-0">
+                {version?.bundleSwapPending ? (
+                  // The updated app is already on disk — the updater swapped it
+                  // under this running process — so a restart loads it. Saying
+                  // "App build out of date" here would repeat the contradiction
+                  // this banner is meant to resolve: the Updates card below
+                  // already reports the runtime as current.
                   <>
-                    <Button onClick={() => startActiveUpdate()} size="sm">
-                      {a.updateNow}
+                    <p className="font-medium">{a.bundleSwapPending}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{a.bundleSwapPendingDesc}</p>
+                    <Button
+                      className="mt-2"
+                      onClick={() => void window.hermesDesktop?.relaunchApp?.()}
+                      size="sm"
+                      variant="textStrong"
+                    >
+                      <RefreshCw className="size-3" />
+                      {a.bundleSwapPendingAction}
                     </Button>
-                    <Button onClick={() => openUpdatesWindow()} size="sm" variant="textStrong">
-                      {a.seeWhatsNew}
+                  </>
+                ) : (
+                  <>
+                    <p className="font-medium">{a.bundleOutOfSync}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{a.bundleOutOfSyncDesc}</p>
+                    <Button asChild className="mt-2" size="sm" variant="textStrong">
+                      <a
+                        href={INSTALLER_URL}
+                        onClick={event => {
+                          event.preventDefault()
+                          void window.hermesDesktop?.openExternal?.(INSTALLER_URL)
+                        }}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        <ExternalLink className="size-3" />
+                        {a.bundleOutOfSyncAction}
+                      </a>
                     </Button>
                   </>
                 )}
-
-                <Button asChild className="ml-auto" size="sm" variant="text">
-                  <a
-                    href={RELEASE_NOTES_URL}
-                    onClick={event => {
-                      event.preventDefault()
-                      void window.hermesDesktop?.openExternal?.(RELEASE_NOTES_URL)
-                    }}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    <ExternalLink className="size-3" />
-                    {a.releaseNotes}
-                  </a>
-                </Button>
               </div>
             </div>
-
-            <ListRow
-              description={a.automaticUpdatesDesc}
-              hint={a.branchCommit(status?.branch ?? 'unknown', status?.currentSha?.slice(0, 7) ?? 'unknown')}
-              title={a.automaticUpdates}
-            />
-          </>
+          </div>
         )}
+      </div>
 
-        {supportsUninstall() ? <UninstallSection /> : null}
+      <div className="mx-auto mt-4 w-full max-w-2xl">
+        <SectionHeading icon={RefreshCw} title={a.updates} />
+
+        <div
+          className={cn(
+            'rounded-xl border px-4 py-3 text-sm',
+            statusTone === 'available' && 'border-primary/30 bg-primary/5 text-foreground',
+            statusTone === 'error' && 'border-destructive/35 bg-destructive/5 text-destructive',
+            statusTone === 'idle' && 'border-border/70 bg-muted/20 text-foreground'
+          )}
+        >
+          <div className="flex items-start gap-2">
+            {statusTone === 'available' ? (
+              <Codicon className="mt-0.5 size-4 shrink-0 text-primary" name="cloud-download" size="1rem" />
+            ) : statusTone === 'error' ? null : (
+              <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            )}
+            <div className="min-w-0">
+              <p className="font-medium">{statusLine}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {a.lastChecked(relativeTime(status?.fetchedAt, a))}
+                {justChecked && !checking ? a.justNowSuffix : ''}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-4">
+            <Button
+              disabled={checking || applying || !supported}
+              onClick={() => void handleCheck()}
+              size="sm"
+              variant="textStrong"
+            >
+              {checking ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
+              {checking ? a.checking : a.checkNow}
+            </Button>
+
+            {updateAvailable && supported && !applying && (
+              <>
+                <Button onClick={() => startActiveUpdate()} size="sm">
+                  {a.updateNow}
+                </Button>
+                <Button onClick={() => openUpdatesWindow('client')} size="sm" variant="textStrong">
+                  {a.seeWhatsNew}
+                </Button>
+              </>
+            )}
+
+            <Button asChild className="ml-auto" size="sm" variant="text">
+              <a
+                href={RELEASE_NOTES_URL}
+                onClick={event => {
+                  event.preventDefault()
+                  void window.hermesDesktop?.openExternal?.(RELEASE_NOTES_URL)
+                }}
+                rel="noreferrer"
+                target="_blank"
+              >
+                <ExternalLink className="size-3" />
+                {a.releaseNotes}
+              </a>
+            </Button>
+          </div>
+        </div>
+
+        <ListRow
+          description={a.automaticUpdatesDesc}
+          hint={a.branchCommit(status?.branch ?? 'unknown', status?.currentSha?.slice(0, 7) ?? 'unknown')}
+          title={a.automaticUpdates}
+        />
+
+        <UninstallSection />
       </div>
     </SettingsContent>
   )

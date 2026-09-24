@@ -1,6 +1,8 @@
 # Provenance
 
 `app/` and `shared/` are extracted from the Hermes Agent monorepo (MIT licensed, Copyright (c) 2025 Nous Research; see `LICENSE`).
+| 2026-09-24 | gateways | i18n | 支持 Gateway 配置国际化 |
+
 
 - Upstream: `hermes-agent` repository, `apps/desktop` and `apps/shared`.
 - Extracted at upstream commit: `56a8e81d33a524f0ba0d68b6d54c8786ed283fb8` (2026-07-08).

@@ -5,7 +5,7 @@ import '@/app/contrib/boot'
 import { useStore } from '@nanostores/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef } from 'react'
-import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router'
 
 import { contributedPaneWidth, ContributedRightPaneBody, useWorkspaceRightPanes } from '@/app/contrib/pane-host'
 import { BootFailureOverlay } from '@/components/boot-failure-overlay'
@@ -1358,7 +1358,7 @@ export function DesktopController() {
           {sidebar}
         </Pane>
       )}
-      <PaneMain>
+      <PaneShell>
         <Routes>
           <Route element={chatView} index />
           <Route element={chatView} path=":sessionId" />
@@ -1395,7 +1395,7 @@ export function DesktopController() {
           <Route element={<LegacySessionRedirect />} path="sessions/:sessionId" />
           <Route element={<Navigate replace to={NEW_CHAT_ROUTE} />} path="*" />
         </Routes>
-      </PaneMain>
+      </PaneShell>
       {/*
         Order within a side maps to column order. Default (rail on the right):
         main | terminal | preview | file-browser. Flipped (rail on the left):
