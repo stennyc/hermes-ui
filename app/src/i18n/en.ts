@@ -2674,7 +2674,7 @@ export const en: Translations = {
       label: 'pagination',
       previous: 'Prev',
       previousAria: 'Go to previous page',
-      next: 'Next',,
+      next: 'Next',
       nextAria: 'Go to next page'
     },
     sidebar: {
