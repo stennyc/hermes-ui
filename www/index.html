@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Hermes" />
+    <link rel="icon" type="image/png" sizes="180x180" href="./apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+    <link rel="shortcut icon" href="./apple-touch-icon.png" />
+    <title>Hermes</title>
+    <script>
+      // Pre-paint the themed background before the app bundle loads. Without
+      // this, the first frame (which is what `ready-to-show` waits for) is the
+      // UA-default white page, and the real theme only lands once the whole
+      // module graph has executed — i.e. the "white flash" on every new
+      // window. applyTheme() in src/themes/context.tsx keeps these keys fresh.
+      try {
+        let bg = localStorage.getItem('hermes-boot-background')
+        let scheme = localStorage.getItem('hermes-boot-color-scheme')
+        if (!bg) {
+          const dark = window.matchMedia('(prefers-color-scheme: dark)').matches
+          bg = dark ? '#111111' : '#f7f7f7'
+          scheme = dark ? 'dark' : 'light'
+        }
+        document.documentElement.style.backgroundColor = bg
+        if (scheme === 'dark' || scheme === 'light') {
+          document.documentElement.style.colorScheme = scheme
+        }
+      } catch {
+        // localStorage unavailable — keep UA defaults.
+      }
+    </script>
+    <script type="module" crossorigin src="./assets/index-CgWrPiL1.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/rolldown-runtime-C_JxhDyB.js">
+    <link rel="modulepreload" crossorigin href="./assets/react-vendor-Dkbp8xwg.js">
+    <link rel="modulepreload" crossorigin href="./assets/atom-DPaP1HVd.js">
+    <link rel="modulepreload" crossorigin href="./assets/preload-helper-HclGiUj8.js">
+    <link rel="modulepreload" crossorigin href="./assets/connection-registry-state-2C_azp5I.js">
+    <link rel="modulepreload" crossorigin href="./assets/hermes-BvIb99pj.js">
+    <link rel="modulepreload" crossorigin href="./assets/i18n-DvY-GWK1.js">
+    <link rel="modulepreload" crossorigin href="./assets/storage-Qfg3Ykci.js">
+    <link rel="modulepreload" crossorigin href="./assets/session-J5Z16_k6.js">
+    <link rel="modulepreload" crossorigin href="./assets/gateway-DOrckB6Q.js">
+    <link rel="modulepreload" crossorigin href="./assets/registry-DhkyE7-g.js">
+    <link rel="modulepreload" crossorigin href="./assets/notifications-Ci3dLXCl.js">
+    <link rel="modulepreload" crossorigin href="./assets/profile-BQtFikCZ.js">
+    <link rel="modulepreload" crossorigin href="./assets/use-media-query-B1NLEagl.js">
+    <link rel="modulepreload" crossorigin href="./assets/context-BZ_nX71Q.js">
+    <link rel="modulepreload" crossorigin href="./assets/format-CYnFnnkk.js">
+    <link rel="modulepreload" crossorigin href="./assets/layout-constants-BlpFhqRb.js">
+    <link rel="modulepreload" crossorigin href="./assets/panes-ChqhNyHe.js">
+    <link rel="modulepreload" crossorigin href="./assets/store-DOyA-iiM.js">
+    <link rel="modulepreload" crossorigin href="./assets/bundle-mjs-B_AA55HL.js">
+    <link rel="modulepreload" crossorigin href="./assets/utils-DqNhCx4L.js">
+    <link rel="modulepreload" crossorigin href="./assets/button-CrhCha0E.js">
+    <link rel="modulepreload" crossorigin href="./assets/combo-DFV_rRuw.js">
+    <link rel="modulepreload" crossorigin href="./assets/external-link-CQ9g5bOy.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconX-C78WJUNh.js">
+    <link rel="modulepreload" crossorigin href="./assets/dialog-CqTWKZ9m.js">
+    <link rel="modulepreload" crossorigin href="./assets/zoomable-image-BXBRFMYL.js">
+    <link rel="modulepreload" crossorigin href="./assets/haptics-gK4SUB5e.js">
+    <link rel="modulepreload" crossorigin href="./assets/haptics-BP7EOff3.js">
+    <link rel="modulepreload" crossorigin href="./assets/desktop-fs-WzTDJuG1.js">
+    <link rel="modulepreload" crossorigin href="./assets/media-B21vO-Ph.js">
+    <link rel="modulepreload" crossorigin href="./assets/chat-runtime-BUHEJjV9.js">
+    <link rel="modulepreload" crossorigin href="./assets/codicon-dvA-AK9l.js">
+    <link rel="modulepreload" crossorigin href="./assets/code-card-Bw_miwxW.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconCheck-DZKu7c0z.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconCopy-ByUnd3sr.js">
+    <link rel="modulepreload" crossorigin href="./assets/tooltip-CjmXuIIN.js">
+    <link rel="modulepreload" crossorigin href="./assets/dist-lbfNfzyM.js">
+    <link rel="modulepreload" crossorigin href="./assets/dropdown-menu-BxUDIqK6.js">
+    <link rel="modulepreload" crossorigin href="./assets/context-menu-C3jTVktn.js">
+    <link rel="modulepreload" crossorigin href="./assets/copy-button-DEZWjYFC.js">
+    <link rel="modulepreload" crossorigin href="./assets/log-tail-Cgz7emZE.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconPlus-C23TQ__k.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconSearch-A5fgTUkx.js">
+    <link rel="modulepreload" crossorigin href="./assets/session-states-MEG2Ee1R.js">
+    <link rel="modulepreload" crossorigin href="./assets/useQuery-BWL3qVjw.js">
+    <link rel="modulepreload" crossorigin href="./assets/skeleton-CPSBJxZT.js">
+    <link rel="modulepreload" crossorigin href="./assets/tab-dropdown-Cb9O1KEM.js">
+    <link rel="modulepreload" crossorigin href="./assets/input-B3VGuYPh.js">
+    <link rel="modulepreload" crossorigin href="./assets/select-DyhndjJP.js">
+    <link rel="modulepreload" crossorigin href="./assets/badge-CJcBALKr.js">
+    <link rel="modulepreload" crossorigin href="./assets/primitives-Bx9sGlFt.js">
+    <link rel="modulepreload" crossorigin href="./assets/layout-CZl5Wnxp.js">
+    <link rel="modulepreload" crossorigin href="./assets/preview-DBqZxPe1.js">
+    <link rel="modulepreload" crossorigin href="./assets/markdown-code-CEO5sJ84.js">
+    <link rel="modulepreload" crossorigin href="./assets/artifacts-D3Y2oXjg.js">
+    <link rel="modulepreload" crossorigin href="./assets/textarea-Dt9arQZC.js">
+    <link rel="modulepreload" crossorigin href="./assets/ime-BxwG-PYM.js">
+    <link rel="modulepreload" crossorigin href="./assets/kbd-qQ67MFVP.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconAlertCircle-Dg3QFwPN.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconAlertTriangle-pvhaxRQ3.js">
+    <link rel="modulepreload" crossorigin href="./assets/segmented-control-DAEUU1lc.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconChevronDown-xKZFlwLu.js">
+    <link rel="modulepreload" crossorigin href="./assets/pane-visibility-DMrQRdHc.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconMail-0kSEJv2p.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconTerminal2-CnaOhqxZ.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconDeviceFloppy-C1Gx-lXq.js">
+    <link rel="modulepreload" crossorigin href="./assets/helpers-uCkR-gPV.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconFileText-a8s-NYo9.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconFolderOpen-x5Mq09M4.js">
+    <link rel="modulepreload" crossorigin href="./assets/search-field-DHC53i7Q.js">
+    <link rel="modulepreload" crossorigin href="./assets/page-search-shell-BM6AIiX7.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconZoomOut-DpQXMWL2.js">
+    <link rel="modulepreload" crossorigin href="./assets/row-button-CLPH4M6a.js">
+    <link rel="modulepreload" crossorigin href="./assets/status-dot-D8o1XXBo.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconPhoto-63KVB7R-.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconRefresh-CJkeWWmr.js">
+    <link rel="modulepreload" crossorigin href="./assets/IconTrash-Cfj6_WWT.js">
+    <link rel="modulepreload" crossorigin href="./assets/use-on-profile-switch-f_67wEAR.js">
+    <link rel="modulepreload" crossorigin href="./assets/projects-CXMh7FIe.js">
+    <link rel="modulepreload" crossorigin href="./assets/checkbox-C-rSFzQT.js">
+    <link rel="modulepreload" crossorigin href="./assets/glyph-spinner-CVtvLVKL.js">
+    <link rel="modulepreload" crossorigin href="./assets/purify.es-yeT1JqXB.js">
+    <link rel="modulepreload" crossorigin href="./assets/routes-C_CZOysr.js">
+    <link rel="modulepreload" crossorigin href="./assets/runtime-readiness-QDgcTu5g.js">
+    <link rel="modulepreload" crossorigin href="./assets/onboarding-enabled-D4JFayRh.js">
+    <link rel="modulepreload" crossorigin href="./assets/titlebar-icon-C-uximGu.js">
+    <link rel="modulepreload" crossorigin href="./assets/overlay-view-ClKHt7KE.js">
+    <link rel="modulepreload" crossorigin href="./assets/error-state-BHQTiMir.js">
+    <link rel="modulepreload" crossorigin href="./assets/error-boundary-D3g6PhUl.js">
+    <link rel="modulepreload" crossorigin href="./assets/panel-CqLQPgcZ.js">
+    <link rel="modulepreload" crossorigin href="./assets/use-resize-observer-tynLFIA8.js">
+    <link rel="modulepreload" crossorigin href="./assets/open-session-J21FSWzw.js">
+    <link rel="modulepreload" crossorigin href="./assets/confirm-CWeBT5cG.js">
+    <link rel="modulepreload" crossorigin href="./assets/system-actions-B0psyLqG.js">
+    <link rel="modulepreload" crossorigin href="./assets/confirm-dialog-Cu-zKByf.js">
+    <link rel="modulepreload" crossorigin href="./assets/archive-skill-confirm-dialog-NkxsFCFF.js">
+    <link rel="modulepreload" crossorigin href="./assets/dist-BwgujXBi.js">
+    <link rel="modulepreload" crossorigin href="./assets/code-editor-B-RaWgKj.js">
+    <link rel="modulepreload" crossorigin href="./assets/page-loader-D2H6Y4Dj.js">
+    <link rel="modulepreload" crossorigin href="./assets/use-refresh-hotkey-kYSOOzxw.js">
+    <link rel="modulepreload" crossorigin href="./assets/lib-CZkrm_XO.js">
+    <link rel="modulepreload" crossorigin href="./assets/lib-CvJYUEFg.js">
+    <link rel="modulepreload" crossorigin href="./assets/chunk-BO2N2NFS-DPh9z_sU.js">
+    <link rel="modulepreload" crossorigin href="./assets/shiki-plain-C_EcoVNz.js">
+    <link rel="modulepreload" crossorigin href="./assets/shiki-highlighter-B_mhcfFt.js">
+    <link rel="modulepreload" crossorigin href="./assets/katex-CU70k_mR.js">
+    <link rel="modulepreload" crossorigin href="./assets/widget-shell-DtksZEjz.js">
+    <link rel="modulepreload" crossorigin href="./assets/renderer-loop-pause-ajXSgtU7.js">
+    <link rel="modulepreload" crossorigin href="./assets/profile-color-TXT65diY.js">
+    <link rel="modulepreload" crossorigin href="./assets/time-CQhmLAiS.js">
+    <link rel="modulepreload" crossorigin href="./assets/sdk-Cf3ZNE_2.js">
+    <link rel="modulepreload" crossorigin href="./assets/cron-B9e4ck29.js">
+    <link rel="modulepreload" crossorigin href="./assets/job-state-BTJxFskd.js">
+    <link rel="modulepreload" crossorigin href="./assets/live-sync-C8Hu4Dow.js">
+    <link rel="modulepreload" crossorigin href="./assets/connections-BeJq7IuN.js">
+    <link rel="modulepreload" crossorigin href="./assets/updates-BtvHU4yS.js">
+    <link rel="modulepreload" crossorigin href="./assets/alert-Cu7YOt1o.js">
+    <link rel="modulepreload" crossorigin href="./assets/credential-key-ui-BlAeEb1F.js">
+    <link rel="modulepreload" crossorigin href="./assets/session-list-density-B9A-3PK7.js">
+    <link rel="modulepreload" crossorigin href="./assets/platform-icon-vA90V5ER.js">
+    <link rel="modulepreload" crossorigin href="./assets/use-theme-epoch-BYymUqCd.js">
+    <link rel="modulepreload" crossorigin href="./assets/use-is-dark-C_He5gjx.js">
+    <link rel="modulepreload" crossorigin href="./assets/utils-Dvw-La5K.js">
+    <link rel="modulepreload" crossorigin href="./assets/store-B-Etcemu.js">
+    <link rel="modulepreload" crossorigin href="./assets/pane-focus-CmuAzfjz.js">
+    <link rel="modulepreload" crossorigin href="./assets/diff-lines-CJ_2YASo.js">
+    <link rel="modulepreload" crossorigin href="./assets/display-path-ljP0gNzP.js">
+    <link rel="modulepreload" crossorigin href="./assets/preview-script-runner-CSDwd3CW.js">
+    <link rel="modulepreload" crossorigin href="./assets/preview-nav-al9xuB62.js">
+    <link rel="modulepreload" crossorigin href="./assets/agents-Ck6uWMPv.js">
+    <link rel="modulepreload" crossorigin href="./assets/vibe-hearts-enabled-9qszeLi0.js">
+    <link rel="modulepreload" crossorigin href="./assets/session-export-BsQpMrkx.js">
+    <link rel="modulepreload" crossorigin href="./assets/use-pet-zoom-gesture-BlQIkLdf.js">
+    <link rel="modulepreload" crossorigin href="./assets/field-NCMswVAV.js">
+    <link rel="modulepreload" crossorigin href="./assets/rename-profile-dialog-Bxzj9QBW.js">
+    <link rel="modulepreload" crossorigin href="./assets/fleet-roster-D5711Kol.js">
+    <link rel="modulepreload" crossorigin href="./assets/timeline-mwZdu4fy.js">
+    <link rel="modulepreload" crossorigin href="./assets/quick-entry-CeMWvw2j.js">
+    <link rel="stylesheet" crossorigin href="./assets/tooltip-BNbTfSqe.css">
+    <link rel="stylesheet" crossorigin href="./assets/glyph-spinner-DL5QKO4M.css">
+    <link rel="stylesheet" crossorigin href="./assets/use-pet-zoom-gesture-BSUmG2fU.css">
+    <link rel="stylesheet" crossorigin href="./assets/index-CKmj_0qP.css">
+  <link rel="manifest" href="./manifest.webmanifest"></head>
+  <body>
+    <div id="root" class="scrollbar-dt"></div>
+    <script>
+      // Pre-hydration app-shell skeleton. The production app is one large
+      // bundle that takes a couple of seconds to parse/evaluate before React
+      // mounts; without this the window shows a bare themed rectangle the whole
+      // time (the "white flash" on every refresh / gateway switch). Here we draw
+      // a themed titlebar + sidebar rail + placeholder rows so the boot reads as
+      // "app loading" instead of "broken", matching what is about to mount.
+      //
+      // The colors/dimensions come from a display-only snapshot written by the
+      // running app (see src/store/shell-snapshot.ts). It is purely cosmetic:
+      // no application data is read here, and main.tsx clears it before React
+      // renders. Everything is best-effort inside try/catch, so a missing or
+      // unreadable snapshot simply degrades to the plain themed background.
+      (function () {
+        try {
+          // The pet overlay window (?win=overlay) is a tiny transparent surface,
+          // not the full shell — never draw the skeleton there.
+          if (new URLSearchParams(window.location.search).get('win') === 'overlay') return
+
+          var raw = localStorage.getItem('hermes-shell-snapshot')
+          if (!raw) return
+          var s = JSON.parse(raw)
+          if (!s || s.v !== 1 || !s.sidebarBg) return
+
+          var root = document.getElementById('root')
+          if (!root) return
+
+          var narrow = window.innerWidth < 768
+          var showSidebar = !!s.sidebarOpen && !narrow
+          var width = Math.max(160, Math.min(480, Number(s.sidebarWidth) || 237))
+          var chromeBg = s.chromeBg || getComputedStyle(document.documentElement).backgroundColor
+
+          var style = document.createElement('style')
+          style.textContent =
+            '@keyframes hermes-skeleton-pulse{0%{opacity:.55}100%{opacity:1}}' +
+            '#hermes-skeleton .hs-row{animation:hermes-skeleton-pulse 1.6s ease-in-out infinite alternate}' +
+            '@media (prefers-reduced-motion: reduce){#hermes-skeleton .hs-row{animation:none}}'
+          document.head.appendChild(style)
+
+          var el = function (tag, css) {
+            var n = document.createElement(tag)
+            if (css) for (var k in css) n.style[k] = css[k]
+            return n
+          }
+
+          var shell = el('div', {
+            position: 'fixed',
+            inset: '0',
+            zIndex: '0',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            pointerEvents: 'none',
+            background: chromeBg
+          })
+          shell.id = 'hermes-skeleton'
+          shell.setAttribute('aria-hidden', 'true')
+
+          // Titlebar band (34px + top safe-area, mirroring --titlebar-height).
+          shell.appendChild(
+            el('div', {
+              height: 'calc(34px + env(safe-area-inset-top, 0px))',
+              flex: '0 0 auto',
+              borderBottom: '1px solid ' + (s.sidebarBorder || 'transparent'),
+              background: chromeBg
+            })
+          )
+
+          var bodyRow = el('div', { flex: '1 1 auto', display: 'flex', minHeight: '0' })
+
+          if (showSidebar) {
+            var side = el('div', {
+              width: width + 'px',
+              flex: '0 0 auto',
+              background: s.sidebarBg,
+              borderRight: '1px solid ' + (s.sidebarBorder || 'transparent'),
+              padding: '10px 8px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '3px'
+            })
+            var rowColor = s.rowColor || 'currentColor'
+            // A short section-header bar, then a run of session-row placeholders.
+            var header = el('div', {
+              height: '11px',
+              width: '38%',
+              margin: '2px 0 8px 4px',
+              borderRadius: '4px',
+              background: rowColor,
+              opacity: '0.18'
+            })
+            side.appendChild(header)
+            for (var i = 0; i < 8; i++) {
+              var row = el('div', {
+                height: '1.625rem',
+                borderRadius: '6px',
+                background: rowColor,
+                opacity: String(0.09 + (i % 2) * 0.03)
+              })
+              row.className = 'hs-row'
+              side.appendChild(row)
+            }
+            bodyRow.appendChild(side)
+          }
+
+          // Empty main area — just the themed surface; content lands on mount.
+          bodyRow.appendChild(el('div', { flex: '1 1 auto', minWidth: '0', background: chromeBg }))
+          shell.appendChild(bodyRow)
+          root.appendChild(shell)
+        } catch (e) {
+          // Best-effort only: any failure leaves the themed background in place.
+        }
+      })()
+    </script>
+  </body>
+</html>

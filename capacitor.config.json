@@ -1,0 +1,26 @@
+{
+  "appId": "com.nousresearch.hermesuiandroid",
+  "appName": "HermesUI",
+  "webDir": "/root/hermes-ui-repo/app/dist",
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 2000,
+      "launchAutoHide": true,
+      "backgroundColor": "#111111",
+      "androidSplashResourceName": "splash",
+      "androidScaleType": "CENTER_CROP"
+    },
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_hermes",
+      "iconColor": "#5E8BFF"
+    },
+    "CapacitorCookies": {
+      "enabled": true
+    }
+  },
+  "server": {
+    "androidScheme": "http",
+    "iosScheme": "http",
+    "cleartext": true
+  }
+}

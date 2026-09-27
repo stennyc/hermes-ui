@@ -1,0 +1,1 @@
+import{c as e}from"./layout-CZl5Wnxp.js";import{o as t}from"./preview-DBqZxPe1.js";var n=new Map;function r(e,t){return n.set(e,t),()=>{n.get(e)===t&&n.delete(e)}}function i(){let r=t.get(),i=r.find(t=>t.id===e.get())??r[0];return i&&n.get(i.id)||null}export{r as n,i as t};
