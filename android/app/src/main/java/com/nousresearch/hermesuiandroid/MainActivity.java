@@ -46,13 +46,17 @@ public class MainActivity extends BridgeActivity {
         // Configure CookieManager for OAuth/password flows
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
-        
+
         // Android 5.0+ (API 21+): Set cookie policy to accept all cookies
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
             cookieManager.setAcceptThirdPartyCookies(webView, true);
         }
 
-        // Set WebViewClient to handle navigation and login redirects
+        // Load the main page first
+        webView.loadUrl(GATEWAY_URL);
+
+        // Inject JavaScript to handle cross-origin API requests via a proxy pattern
+        // This intercepts fetch/XHR calls and rewrites them to use same-origin proxy
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(android.webkit.WebView view, String url) {
@@ -94,11 +98,33 @@ public class MainActivity extends BridgeActivity {
                         null
                     );
                 }
+
+                // Inject CORS proxy script to handle cross-origin requests
+                // This wraps fetch to proxy through the same-origin gateway
+                view.evaluateJavascript(
+                    "(function() { " +
+                    "  const proxyTarget = '" + GATEWAY_URL.replace("http://", "").replace("https://", "") + "'; " +
+                    "  const originalFetch = window.fetch; " +
+                    "  window.fetch = function(url, options) { " +
+                    "    // If this is a cross-origin request to another gateway, proxy it through the current origin " +
+                    "    try { " +
+                    "      const targetUrl = new URL(url); " +
+                    "      const currentOrigin = new URL(window.location.href).origin; " +
+                    "      if (targetUrl.origin !== currentOrigin && (url.includes('/api/') || url.includes('/auth/') || url.includes('/login'))) { " +
+                    "        // Rewrite to proxy through current gateway " +
+                    "        const proxiedUrl = currentOrigin + url; " +
+                    "        console.log('[CORS Proxy]', 'Rewriting', url, '->', proxiedUrl); " +
+                    "        url = proxiedUrl; " +
+                    "      } " +
+                    "    } catch(e) { " +
+                    "      // Invalid URL, proceed normally " +
+                    "    } " +
+                    "    return originalFetch.apply(this, arguments); " +
+                    "  }; " +
+                    "})()",
+                    null
+                );
             }
         });
-
-        // Load the Gateway URL directly (not local file://)
-        // This ensures same-origin for cookies and WebSocket connections
-        webView.loadUrl(GATEWAY_URL);
     }
 }
