@@ -29,6 +29,8 @@ export function FirstRunRemoteForm({ onBack }: FirstRunRemoteFormProps) {
   const [probe, setProbe] = useState<DesktopConnectionProbeResult | null>(null)
   const [oauthConnected, setOauthConnected] = useState(false)
   const [signingIn, setSigningIn] = useState(false)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
   const [testing, setTesting] = useState(false)
   const [applying, setApplying] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -103,7 +105,11 @@ export function FirstRunRemoteForm({ onBack }: FirstRunRemoteFormProps) {
   const canRetryProbe = Boolean(trimmedUrl && probeStatus === 'error')
 
   const canTest = Boolean(
-    trimmedUrl && (canRetryProbe || (authResolved && (authMode === 'oauth' ? oauthConnected : remoteToken.trim())))
+    trimmedUrl && (canRetryProbe || (authResolved && (
+      authMode === 'oauth' ? oauthConnected :
+      isPasswordProvider ? (username.trim() && password.trim()) :
+      remoteToken.trim()
+    )))
   )
 
   const payload = () => ({
@@ -121,7 +127,6 @@ export function FirstRunRemoteForm({ onBack }: FirstRunRemoteFormProps) {
   const signIn = async () => {
     if (!trimmedUrl) {
       setError(copy.enterUrlFirst)
-
       return
     }
 
@@ -129,16 +134,33 @@ export function FirstRunRemoteForm({ onBack }: FirstRunRemoteFormProps) {
     setError(null)
 
     try {
-      // Unlike Settings, first-run intentionally does not pre-save remote mode:
-      // backing out must still allow local install without leaving a remote
-      // connection selected. The login IPC accepts the raw URL and stores only
-      // its OAuth cookies; config is persisted once the user applies.
-      const result = await window.hermesDesktop.oauthLoginConnectionConfig(trimmedUrl)
-      invalidateTest()
-      setOauthConnected(Boolean(result.connected))
-
-      if (!result.connected) {
-        setError(copy.signInIncomplete)
+      // For password providers, do direct auth instead of OAuth flow
+      if (isPasswordProvider) {
+        const res = await fetch(`${trimmedUrl}/auth/password-login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            provider: 'basic',
+            username: username.trim(),
+            password: password
+          })
+        })
+        const data = await res.json()
+        if (res.ok && data.ok) {
+          setOauthConnected(true)
+          invalidateTest()
+        } else {
+          setError(data.detail || 'Invalid credentials')
+        }
+      } else {
+        // OAuth flow for non-password providers
+        const result = await window.hermesDesktop.oauthLoginConnectionConfig(trimmedUrl)
+        invalidateTest()
+        setOauthConnected(Boolean(result.connected))
+        if (!result.connected) {
+          setError(copy.signInIncomplete)
+        }
       }
     } catch (err) {
       setError(errorMessage(err))
@@ -295,7 +317,44 @@ export function FirstRunRemoteForm({ onBack }: FirstRunRemoteFormProps) {
             </div>
           ) : null}
 
-          {authResolved && authMode === 'token' ? (
+          {authResolved && isPasswordProvider && authMode !== 'oauth' ? (
+            <div className="rounded-md border border-(--ui-stroke-tertiary) p-3 space-y-3">
+              <div>
+                <div className="text-sm font-medium">{copy.authTitle}</div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {oauthConnected ? copy.authSignedIn : `Sign in with ${providerLabel}`}
+                </p>
+              </div>
+              <div className="grid gap-2">
+                <Input
+                  autoComplete="username"
+                  disabled={signingIn || applying}
+                  onChange={event => { setUsername(event.target.value); invalidateTest() }}
+                  placeholder="Username"
+                  value={username}
+                />
+                <Input
+                  autoComplete="current-password"
+                  disabled={signingIn || applying}
+                  onChange={event => { setPassword(event.target.value); invalidateTest() }}
+                  placeholder="Password"
+                  type="password"
+                  value={password}
+                />
+              </div>
+              <Button
+                disabled={signingIn || applying || !canTest}
+                onClick={() => void signIn()}
+                size="sm"
+                className="w-full"
+              >
+                {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
+                {copy.signIn}
+              </Button>
+            </div>
+          ) : null}
+
+          {authResolved && !isPasswordProvider && authMode !== 'oauth' ? (
             <label className="grid gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">{copy.tokenTitle}</span>
               <Input
