@@ -52,19 +52,48 @@ public class MainActivity extends BridgeActivity {
             cookieManager.setAcceptThirdPartyCookies(webView, true);
         }
 
-        // Set WebViewClient to handle navigation
+        // Set WebViewClient to handle navigation and login redirects
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(android.webkit.WebView view, String url) {
-                // Allow all URLs to load within the WebView
+                android.util.Log.d("HermesUI", "shouldOverride: " + url);
                 return false;
             }
-            
+
+            @Override
+            public void onPageStarted(android.webkit.WebView view, String url, android.graphics.Bitmap favicon) {
+                super.onPageStarted(view, url, favicon);
+                android.util.Log.d("HermesUI", "onPageStarted: " + url);
+            }
+
             @Override
             public void onPageFinished(android.webkit.WebView view, String url) {
                 super.onPageFinished(view, url);
-                // Log navigation for debugging
-                android.util.Log.d("HermesUI", "Page loaded: " + url);
+                android.util.Log.d("HermesUI", "onPageFinished: " + url);
+
+                // After login, the gateway returns JSON {"ok":true,"next":"/"}
+                // instead of HTTP redirect. We need to navigate to the next page.
+                if (url.contains("/auth/password-login")) {
+                    // Inject JavaScript to parse the response and navigate
+                    view.evaluateJavascript(
+                        "(function() { " +
+                        "  const originalFetch = window.fetch; " +
+                        "  window.fetch = function(url, options) { " +
+                        "    return originalFetch.apply(this, arguments).then(response => { " +
+                        "      if (url.includes('/auth/password-login') && response.ok) { " +
+                        "        return response.json().then(json => { " +
+                        "          if (json.ok && json.next) { " +
+                        "            window.location.href = json.next; " +
+                        "          } " +
+                        "        }); " +
+                        "      } " +
+                        "      return response; " +
+                        "    }); " +
+                        "  }; " +
+                        "})()",
+                        null
+                    );
+                }
             }
         });
 
