@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Hermes Mobile connects to private gateways over HTTP or HTTPS.
+  Cleartext is allowed for local/private networks and all domains.
+-->
+<network-security-config>
+    <!-- Allow cleartext for all traffic (private gateways may use HTTP) -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
