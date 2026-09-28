@@ -74,15 +74,9 @@ export type RightRailTabId = `artifact:${string}` | `file:${string}` | `url:${st
 ensurePaneRegistered(CHAT_SIDEBAR_PANE_ID, { open: true })
 ensurePaneRegistered(FILE_BROWSER_PANE_ID, { open: false })
 
-export const $sidebarOpen: ReadableAtom<boolean> = computed(
-  $paneStates,
-  states => states[CHAT_SIDEBAR_PANE_ID]?.open ?? true
-)
+export const $sidebarOpen: WritableAtom<boolean> = atom(true)
 
-export const $fileBrowserOpen: ReadableAtom<boolean> = computed(
-  $paneStates,
-  states => states[FILE_BROWSER_PANE_ID]?.open ?? false
-)
+export const $fileBrowserOpen: WritableAtom<boolean> = atom(false)
 
 // Persisted so a relaunch reopens the same rail tab. Null when the rail has no
 // tabs; a restored id with no matching tab is reconciled in the preview store.
@@ -549,6 +543,7 @@ export function toggleSidebarOpen() {
     const open = restoreMinimizedTreeSide('left') || !$sidebarOpen.get()
     setPaneOpen(CHAT_SIDEBAR_PANE_ID, open)
     setTreeSideCollapsed('left', !open)
+    $sidebarOpen.set(open)
   }
 }
 
@@ -560,6 +555,7 @@ export function toggleFileBrowserOpen() {
   const open = restoreMinimizedTreeSide('right') || !$fileBrowserOpen.get()
   setPaneOpen(FILE_BROWSER_PANE_ID, open)
   setTreeSideCollapsed('right', !open)
+  $fileBrowserOpen.set(open)
 }
 
 export function setFileBrowserOpen(open: boolean) {

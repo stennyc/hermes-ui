@@ -1,4 +1,21 @@
+// Global fix: guard against `addRange()` on detached ranges from third-party
+// editors (e.g., @assistant-ui/react). These throw when a range's container
+// has been removed from the DOM between renders.
+if (typeof Selection !== 'undefined' && Selection.prototype) {
+  const _orig = Selection.prototype.addRange
+  Selection.prototype.addRange = function (range: Range) {
+    try {
+      _orig.call(this, range)
+    } catch {
+      // Range is detached from the document; ignore silently.
+    }
+  }
+}
+
 import './styles.css'
+// Side-effect: installs the web bridge as `window.hermesDesktop`. MUST be the
+// first import — several stores touch the bridge at module-evaluation time.
+import './web-bridge/install'
 // Side-effect: reports in-flight turns to the main process for the quit guard.
 import './store/active-work'
 // Side-effect: mirrors the machine's AC/battery state for poll demotion.

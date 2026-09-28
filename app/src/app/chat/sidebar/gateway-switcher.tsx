@@ -23,7 +23,7 @@ const GATEWAY_SETTINGS_ROUTE = `${SETTINGS_ROUTE}?tab=gateway`
  */
 export function GatewayRail() {
   const { t } = useI18n()
-  const g = t.gateways
+  const g = t.settings.gateways
   const navigate = useNavigate()
   const gateways = useStore($gateways)
   const activeId = useStore($activeGatewayId)

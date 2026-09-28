@@ -1242,6 +1242,7 @@ export const $attentionSessionIds = atom<Set<string>>(new Set())
 export const setSessionProfileTotals = (next: Updater<Record<string, number>>) =>
   updateAtom($sessionProfileTotals, next)
 export const $sessionProfileTotals = atom<Record<string, number>>({})
+export const $sessionsTotal = atom(0)
 export const setSessionsTotal = (n: number) => $sessionsTotal.set(n)
 export const setMessagingTruncated = (next: Updater<boolean>) => updateAtom($messagingTruncated, next)
 export const setSessionProfilesTruncated = (next: Updater<Record<string, boolean>>) =>

@@ -136,7 +136,12 @@ export function buildHermesWebSocketUrl(options: HermesWebSocketUrlOptions): str
   const loc = readWindowLocation()
   const protocol = options.protocol ?? loc.protocol
   const host = options.host ?? loc.host
-  const wsScheme = protocol === 'https:' || protocol === 'wss:' ? 'wss:' : 'ws:'
+  // For internal/private networks, always use ws:// to avoid mixed content issues
+  // when the page is served over HTTPS but the gateway is HTTP-only
+  const isPrivateHost = host.includes('127.0.0.1') || host.includes('localhost') ||
+                        /^10\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+                        /^192\.168\./.test(host)
+  const wsScheme = isPrivateHost ? 'ws:' : (protocol === 'https:' || protocol === 'wss:' ? 'wss:' : 'ws:')
   const qs = new URLSearchParams(options.params ?? {})
 
   if (options.authParam) {

@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react'
+import { useCallback, useSyncExternalStore, useRef } from 'react'
 
 import { $composerActionsBySession } from '@/store/composer-actions'
 import { $statusItemsBySession } from '@/store/composer-status'
@@ -36,21 +36,30 @@ const subscribe = (onChange: () => void) => {
  * only on the actual show/hide transition.
  */
 export function useSessionStatusPresence(sessionId: string | null): boolean {
+  const cacheRef = useRef<{ sessionId: string | null; value: boolean }>({ sessionId: null, value: false })
+
   return useSyncExternalStore(subscribe, () => {
     if (!sessionId) {
       return false
     }
 
-    if (FEEDS.some(feed => (feed.get()[sessionId]?.length ?? 0) > 0)) {
+    const hasFeedItems = FEEDS.some(feed => (feed.get()[sessionId]?.length ?? 0) > 0)
+    if (hasFeedItems) {
       return true
     }
 
     const control = $sessionControlBySession.get()[sessionId]
-
-    return Boolean(
+    const result = Boolean(
       control?.error ||
       (control?.snapshot &&
         (control.snapshot.goal !== null || control.snapshot.loop !== null || control.snapshot.heartbeat !== null))
     )
+
+    // Cache to avoid returning new boolean references on every read
+    if (cacheRef.current.sessionId === sessionId && cacheRef.current.value === result) {
+      return cacheRef.current.value
+    }
+    cacheRef.current = { sessionId, value: result }
+    return result
   })
 }

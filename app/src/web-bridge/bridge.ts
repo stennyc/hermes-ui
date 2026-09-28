@@ -141,9 +141,10 @@ function buildTokenWsUrl(token: string): string {
 }
 
 async function mintWsTicket(origin: string | null): Promise<string> {
+  const credentials = isCapacitorWebView() ? 'omit' : 'same-origin'
   const res = await fetch(withGatewayRoute(`${baseUrl()}/api/auth/ws-ticket`, origin), {
     method: 'POST',
-    credentials: 'same-origin'
+    credentials
   })
 
   if (!res.ok) {
@@ -173,8 +174,9 @@ async function probeAuthConnected(
   }
 
   try {
+    const credentials = isCapacitorWebView() ? 'omit' : 'same-origin'
     const res = await fetch(withGatewayRoute(`${base}/api/auth/me`, origin), {
-      credentials: 'same-origin',
+      credentials,
       signal: AbortSignal.timeout(6_000)
     })
 
@@ -273,6 +275,13 @@ function openOauthLoginPopup(base: string, origin: string | null): Promise<Deskt
   })
 }
 
+/** Detect if running inside a Capacitor WebView (Android/iOS). */
+function isCapacitorWebView(): boolean {
+  return typeof (window as any).Capacitor !== 'undefined' ||
+    window.location.href.startsWith('capacitor://') ||
+    window.location.href.startsWith('https://localhost')
+}
+
 const DEFAULT_API_TIMEOUT_MS = 30_000
 
 async function apiFetch<T>(request: HermesApiRequest): Promise<T> {
@@ -290,11 +299,15 @@ async function apiFetch<T>(request: HermesApiRequest): Promise<T> {
 
   if (token) {headers['X-Hermes-Session-Token'] = token}
 
+  // In Capacitor WebView, use 'omit' credentials to allow cross-origin requests
+  // and rely on token header for auth instead of cookies
+  const credentials = isCapacitorWebView() ? 'omit' : 'same-origin'
+
   const res = await fetch(withGatewayRoute(url, activeUpstreamOrigin()), {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
-    credentials: 'same-origin',
+    credentials,
     signal: AbortSignal.timeout(timeoutMs ?? DEFAULT_API_TIMEOUT_MS)
   })
 
@@ -358,7 +371,16 @@ async function toConnectionConfig(stored: StoredConnection): Promise<DesktopConn
     remoteOauthConnected,
     remoteTokenPreview: stored.remoteToken ? `...${stored.remoteToken.slice(-4)}` : null,
     remoteTokenSet: hasToken,
-    remoteUrl: stored.remoteUrl
+    remoteUrl: stored.remoteUrl,
+    secureTokenStorage: false,
+    remoteTokenPlainText: false,
+    cloudOrg: '',
+    sshHost: '',
+    sshUser: '',
+    sshPort: null,
+    sshKeyPath: '',
+    sshRemoteHermesPath: '',
+    sshRemoteProfile: ''
   }
 }
 
@@ -367,8 +389,9 @@ async function fetchStatus(
   base: string,
   origin: string | null = null
 ): Promise<{ auth_providers?: string[]; auth_required?: boolean; version?: string } | null> {
+  const credentials = isCapacitorWebView() ? 'omit' : 'same-origin'
   const res = await fetch(withGatewayRoute(`${base}/api/status`, origin), {
-    credentials: 'same-origin',
+    credentials,
     signal: AbortSignal.timeout(8_000)
   })
 
@@ -463,7 +486,11 @@ export function copyTextWithSelection(text: string): boolean {
       selection.removeAllRanges()
 
       for (const range of previousRanges) {
-        selection.addRange(range)
+        try {
+          selection.addRange(range)
+        } catch {
+          // Range may have been detached from the document during re-render; skip it
+        }
       }
     }
 
@@ -503,11 +530,6 @@ export function createWebBridge(): Window['hermesDesktop'] {
 
       return opened ? { ok: true } : { ok: false, error: 'popup-blocked' }
     },
-    openNewSessionWindow: async () => {
-      const opened = window.open(`${window.location.pathname}#/`, '_blank', 'noopener')
-
-      return opened ? { ok: true } : { ok: false, error: 'popup-blocked' }
-    },
     petOverlay: {
       open: async () => ({ ok: false }),
       close: async () => ({ ok: true }),
@@ -518,6 +540,49 @@ export function createWebBridge(): Window['hermesDesktop'] {
       control: noop,
       onState: unsubscribed,
       onControl: unsubscribed
+    },
+    cloud: {
+      status: async () => ({ portalBaseUrl: '', signedIn: false }),
+      login: async () => ({ portalBaseUrl: '', signedIn: false, ok: false }),
+      logout: async () => ({ portalBaseUrl: '', signedIn: false, ok: true }),
+      discover: async () => ({ agents: [], needsOrgSelection: false }),
+      agentSignIn: async () => ({ baseUrl: '', connected: false, ok: false })
+    },
+    connections: {
+      list: async () => ({ version: 1, primary: '', secureTokenStorage: false, connections: [] }),
+      save: async () => ({ ok: false, connection: {} as any, registry: { version: 1, primary: '', secureTokenStorage: false, connections: [] } }),
+      remove: async () => ({ ok: false, registry: { version: 1, primary: '', secureTokenStorage: false, connections: [] } }),
+      setPrimary: async () => ({ ok: false, registry: { version: 1, primary: '', secureTokenStorage: false, connections: [] } }),
+      test: async () => ({ ok: false }),
+    },
+    getProfileRoutes: async () => [],
+    getPoolLimits: async () => ({ maxBackends: 5, idleMs: 300000 }),
+    setPoolLimits: async () => ({ ok: true, limits: { maxBackends: 5, idleMs: 300000 } }),
+    openSessionInTerminal: async () => ({ ok: false }),
+    openWindow: async () => ({ ok: false }),
+    openBrowserWindow: async () => ({ ok: false }),
+    onBrowserPopoutClosed: () => () => {},
+    claimAmbientCue: async () => false,
+    getSecretStorageEncryption: async () => ({ on: false }),
+    setSecretStorageEncryption: async () => ({ on: false }),
+    sshConfigHosts: async () => ({ hosts: [] }),
+    sshResolveHost: async () => ({ hostname: null, identityFile: null, port: null, user: null }),
+    readClipboard: async () => '',
+    savePastedText: async () => '',
+    continueBootstrapLocal: async () => ({ ok: false }),
+    findInPage: async () => ({ count: 0 }),
+    stopFindInPage: async () => {},
+    onFoundInPage: () => () => {},
+    onOpenFindBarRequested: () => () => {},
+    quickEntry: {
+      getSettings: async () => ({ enabled: false, shortcut: '', error: null, registered: false }),
+      setSettings: async () => ({ enabled: false, shortcut: '', error: null, registered: false }),
+      submit: noop,
+      dismiss: noop,
+      pushState: noop,
+      onState: unsubscribed,
+      onSubmit: unsubscribed,
+      onShown: unsubscribed
     },
     getBootProgress: async () => readyBootProgress(),
     getConnectionConfig: async () => toConnectionConfig(loadStoredConnection()),
@@ -579,18 +644,19 @@ export function createWebBridge(): Window['hermesDesktop'] {
       const base = remoteUrl ? normalizeBase(remoteUrl) : baseUrl()
       const origin = remoteUrl ? upstreamOriginFor(remoteUrl) : activeUpstreamOrigin()
 
+      // Cross-origin check disabled for self-hosted usage
       // A cross-origin absolute URL can never hold a login session in the
       // browser (see isSameOrigin). A whitelisted gateway folds to the serving
       // origin (proxied), so it passes; a genuinely cross-origin one fails loudly
       // with guidance instead of stranding the user on the gateway's dashboard.
-      if (!isSameOrigin(base)) {
-        throw new Error(
-          `This gateway (${base}) is on a different origin than the app, so the browser ` +
-            'will not keep its login session after sign-in. Reach it on the same origin ' +
-            'instead: whitelist it (HERMES_GATEWAY_URL or config.json) so the dev proxy ' +
-            "folds it same-origin, or use a session token. Desktop can use an absolute URL; the browser can't."
-        )
-      }
+      // if (!isSameOrigin(base)) {
+      //   throw new Error(
+      //     `This gateway (${base}) is on a different origin than the app, so the browser ` +
+      //       'will not keep its login session after sign-in. Reach it on the same origin ' +
+      //       'instead: whitelist it (HERMES_GATEWAY_URL or config.json) so the dev proxy ' +
+      //       "folds it same-origin, or use a session token. Desktop can use an absolute URL; the browser can't."
+      //   )
+      // }
 
       // Same-origin (incl. a whitelisted gateway folded through the dev proxy):
       // mirror the desktop popup so the app stays mounted. Sync the routing
@@ -602,13 +668,18 @@ export function createWebBridge(): Window['hermesDesktop'] {
     oauthLogoutConnectionConfig: async remoteUrl => {
       const base = remoteUrl ? normalizeBase(remoteUrl) : baseUrl()
       const origin = remoteUrl ? upstreamOriginFor(remoteUrl) : activeUpstreamOrigin()
-      await fetch(withGatewayRoute(`${base}/auth/logout`, origin), { method: 'POST', credentials: 'same-origin' })
+      const credentials = isCapacitorWebView() ? 'omit' : 'same-origin'
+      await fetch(withGatewayRoute(`${base}/auth/logout`, origin), { method: 'POST', credentials })
 
       return { ok: true, connected: false }
     },
     profile: {
+      getDefault: async () => null,
+      setDefault: async (route) => route,
+      onDefaultChanged: () => () => {},
       get: async () => ({ profile: null }),
-      set: async name => ({ profile: name })
+      remember: async () => ({ profile: null }),
+      set: async name => ({ profile: name ?? null })
     },
     api: apiFetch,
     notify: webNotify,
@@ -702,6 +773,7 @@ export function createWebBridge(): Window['hermesDesktop'] {
       log: [],
       startedAt: null,
       completedAt: null,
+      setupChoice: null,
       unsupportedPlatform: null
     }),
     resetBootstrap: async () => ({ ok: true }),
@@ -709,7 +781,7 @@ export function createWebBridge(): Window['hermesDesktop'] {
     cancelBootstrap: async () => ({ ok: true, cancelled: true }),
     onBootstrapEvent: unsubscribed,
     getVersion: async () => ({
-      appVersion: '0.1.0-web',
+      appVersion: '0.21.3',
       electronVersion: '',
       nodeVersion: '',
       platform: 'web',

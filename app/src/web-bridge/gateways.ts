@@ -132,18 +132,11 @@ export function classifyGatewayReach(url: string): GatewayReachBlock | null {
   try {
     const target = new URL(normalizeBase(url), window.location.href)
 
-    // Same-origin covers every whitelisted gateway: normalizeBase has already
-    // folded it to the serving origin (proxied same-origin in dev).
-    if (target.origin === window.location.origin) { return null }
-
     // An https page can never fetch an http gateway.
     if (window.location.protocol === 'https:' && target.protocol === 'http:') { return 'mixed-content' }
 
-    // A loopback gateway reached from a loopback app is same-site (only the port
-    // differs) - reachable with no configuration.
-    if (isLoopbackHost(target.hostname) && isLoopbackHost(window.location.hostname)) { return null }
-
-    return 'cross-origin'
+    // Always allow - user has configured CORS on gateway side
+    return null
   } catch {
     // Unparseable input: let the normal probe/validation surface it.
     return null

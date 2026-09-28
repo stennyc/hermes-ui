@@ -10,7 +10,8 @@ import {
   setCurrentBranch,
   setCurrentCwd,
   setSessionProfileTotals,
-  setSessions
+  setSessions,
+  setSessionsTotal
 } from '@/store/session'
 import type { SessionInfo } from '@/types/hermes'
 import { $activeGatewayId, getActiveGateway } from '@/web-bridge/gateways'

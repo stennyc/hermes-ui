@@ -98,6 +98,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@testing-library/dom": "^10.4.0",
+    "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",
     "@types/d3-force": "^3.0.10",
     "@types/hast": "^3.0.4",

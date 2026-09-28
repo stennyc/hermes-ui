@@ -77,7 +77,7 @@ function GatewayNameField({
  */
 export function GatewayManager() {
   const { t } = useI18n()
-  const g = t.gateways
+  const g = t.settings.gateways
   const gateways = useStore($gateways)
   const activeId = useStore($activeGatewayId)
 

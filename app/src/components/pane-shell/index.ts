@@ -14,7 +14,7 @@ export const PANE_TOGGLE_REVEAL_EVENT = 'hermes:pane-toggle-reveal'
 import type { ReactNode } from 'react'
 
 export type PaneId = string
-export function PaneShell({ children }: { id?: PaneId; children?: ReactNode }): ReactNode {
+export function PaneShell({ children, className, style }: { id?: PaneId; children?: ReactNode; className?: string; style?: React.CSSProperties }): ReactNode {
   return children ?? null
 }
 export { Pane, PaneMain } from './pane-shell'

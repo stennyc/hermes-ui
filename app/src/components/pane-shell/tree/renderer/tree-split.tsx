@@ -68,21 +68,22 @@ function groupIdOf(node: LayoutNode): null | string {
  * subtree via a signature-gated snapshot.
  */
 function useSubtreeOverrides(paneIds: readonly string[]): TrackContext['overrides'] {
-  const key = paneIds.join(',')
-  const cache = useRef<{ sig: string; value: Record<string, PaneStateSnapshot> }>({ sig: '\0', value: {} })
+  const cache = useRef<{ sig: string; value: Record<string, PaneStateSnapshot> }>({ sig: '\\0', value: {} })
+  const paneIdsRef = useRef(paneIds)
+  paneIdsRef.current = paneIds
 
   const snapshot = useCallback(() => {
     const all = $paneStates.get()
+    const currentPaneIds = paneIdsRef.current
 
-    const sig = paneIds.map(id => `${id}:${all[id]?.widthOverride ?? ''}:${all[id]?.heightOverride ?? ''}`).join('|')
+    const sig = currentPaneIds.map(id => `${id}:${all[id]?.widthOverride ?? ''}:${all[id]?.heightOverride ?? ''}`).join('|')
 
     if (cache.current.sig !== sig) {
-      cache.current = { sig, value: Object.fromEntries(paneIds.flatMap(id => (all[id] ? [[id, all[id]]] : []))) }
+      cache.current = { sig, value: Object.fromEntries(currentPaneIds.flatMap(id => (all[id] ? [[id, all[id]]] : []))) }
     }
 
     return cache.current.value
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key])
+  }, [])
 
   return useSyncExternalStore(cb => $paneStates.listen(cb), snapshot, snapshot)
 }

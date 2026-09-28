@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from 'react'
+import { useCallback, useSyncExternalStore, useRef } from 'react'
 
 import type { Translations } from '@/i18n'
 
@@ -11,7 +11,25 @@ interface SessionSliceStore<T> {
 export function useSessionValue<T>(store: SessionSliceStore<T>, sessionId: string | null): T | undefined {
   const subscribe = useCallback((onChange: () => void) => store.listen(onChange), [store])
 
-  return useSyncExternalStore(subscribe, () => (sessionId ? store.get()[sessionId] : undefined))
+  // Cache the snapshot to avoid returning new references on every read,
+  // which would cause an infinite re-render loop in useSyncExternalStore.
+  const cacheRef = useRef<{ sessionId: string | null; value: T | undefined }>({ sessionId: null, value: undefined })
+
+  return useSyncExternalStore(subscribe, () => {
+    if (sessionId === null) {
+      return undefined
+    }
+
+    const current = store.get()[sessionId]
+
+    // Return cached value if unchanged to maintain referential stability
+    if (cacheRef.current.sessionId === sessionId && cacheRef.current.value === current) {
+      return cacheRef.current.value
+    }
+
+    cacheRef.current = { sessionId, value: current }
+    return current
+  })
 }
 
 export interface ConfirmState {

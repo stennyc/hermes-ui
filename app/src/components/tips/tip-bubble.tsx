@@ -41,6 +41,8 @@ export function TipBubble({ action, anchor, keybind, onClose, side, text, title 
   const { t } = useI18n()
   const combo = useKeybindHint(keybind ?? '')
   const anchorRef = useRef<HTMLElement | null>(anchor)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const measurableRef = anchorRef as React.RefObject<any>
 
   // Radix reads `virtualRef.current` on every render of the anchor, so keeping
   // the ref current is what lets a tip follow an element that got re-created
@@ -56,7 +58,7 @@ export function TipBubble({ action, anchor, keybind, onClose, side, text, title 
 
   return (
     <Popover open>
-      <PopoverAnchor virtualRef={anchorRef} />
+      <PopoverAnchor virtualRef={measurableRef} />
       <PopoverContent
         aria-live="polite"
         className="p-2.5"

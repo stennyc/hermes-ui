@@ -5,12 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { assistantTextPart, type ChatMessage } from '@/lib/chat-messages'
 import {
   $previewTarget,
-  clearSessionPreviewRegistry,
   type PreviewTarget,
-  registerSessionPreview
+  openPreview,
+  closeRightRail
 } from '@/store/preview'
 import { $currentCwd, $messages } from '@/store/session'
-import type { RpcEvent } from '@/types/hermes'
+import type { GatewayEvent } from '@hermes/shared'
 
 import { usePreviewRouting } from './use-preview-routing'
 
@@ -35,19 +35,15 @@ function previewTarget(source: string): PreviewTarget {
   }
 }
 
-let handleEvent: (event: RpcEvent) => void = () => undefined
+let handleEvent: (event: GatewayEvent) => void = () => undefined
 
-function PreviewRoutingHarness({ onEvent }: { onEvent: (handler: (event: RpcEvent) => void) => void }) {
+function PreviewRoutingHarness({ onEvent }: { onEvent: (handler: (event: GatewayEvent) => void) => void }) {
   const activeSessionIdRef = useRef<string | null>('session-1')
 
   const routing = usePreviewRouting({
-    activeSessionIdRef,
     baseHandleGatewayEvent: vi.fn(),
     currentCwd: '/work',
-    currentView: 'chat',
-    requestGateway: vi.fn(),
-    routedSessionId: 'session-1',
-    selectedStoredSessionId: null
+    requestGateway: vi.fn()
   })
 
   useEffect(() => {
@@ -61,8 +57,7 @@ describe('usePreviewRouting', () => {
   beforeEach(() => {
     $currentCwd.set('/work')
     $messages.set([])
-    $previewTarget.set(null)
-    clearSessionPreviewRegistry()
+    closeRightRail()
     handleEvent = () => undefined
     window.localStorage.clear()
 
@@ -77,16 +72,15 @@ describe('usePreviewRouting', () => {
   afterEach(() => {
     cleanup()
     $messages.set([])
-    $previewTarget.set(null)
+    closeRightRail()
     vi.restoreAllMocks()
-    clearSessionPreviewRegistry()
     window.localStorage.clear()
   })
 
   it('opens the active session preview from the registry', async () => {
     const target = previewTarget('/work/demo.html')
 
-    registerSessionPreview('session-1', target, 'tool-result')
+    openPreview(target, 'tool-result')
     render(
       <PreviewRoutingHarness
         onEvent={handler => {
@@ -134,9 +128,9 @@ describe('usePreviewRouting', () => {
         payload: { inline_diff: '\u001b[38;2;218;165;32ma/preview-demo.html -> b/preview-demo.html\u001b[0m\n' },
         session_id: 'session-1',
         type: 'tool.complete'
-      })
+      } as GatewayEvent)
     )
-    act(() => handleEvent({ payload: { path: './dist/index.html' }, session_id: 'session-1', type: 'tool.complete' }))
+    act(() => handleEvent({ payload: { path: './dist/index.html' }, session_id: 'session-1', type: 'tool.complete' } as GatewayEvent))
 
     expect($previewTarget.get()).toBeNull()
     expect(window.localStorage.getItem('hermes.desktop.sessionPreviews.v1')).toBeNull()

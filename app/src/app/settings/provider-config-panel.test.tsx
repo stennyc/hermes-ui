@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import '@testing-library/jest-dom/vitest'
 
 import type { MemoryProviderConfig } from '@/types/hermes'
 
@@ -26,6 +27,8 @@ function hindsightSchema(overrides: Partial<MemoryProviderConfig['fields'][numbe
       description: 'How Hermes connects to Hindsight.',
       placeholder: '',
       is_set: true,
+      group: 'connection',
+      inline: false,
       options: [
         { value: 'cloud', label: 'Cloud', description: 'Hindsight Cloud API (lightweight, just needs an API key)' },
         { value: 'local_external', label: 'Local External', description: 'Connect to an existing Hindsight instance' }
@@ -39,6 +42,8 @@ function hindsightSchema(overrides: Partial<MemoryProviderConfig['fields'][numbe
       description: 'Used to authenticate with the Hindsight API.',
       placeholder: 'Enter Hindsight API key',
       is_set: false,
+      group: 'connection',
+      inline: false,
       options: []
     },
     {
@@ -49,6 +54,8 @@ function hindsightSchema(overrides: Partial<MemoryProviderConfig['fields'][numbe
       description: '',
       placeholder: '',
       is_set: true,
+      group: 'connection',
+      inline: false,
       options: []
     },
     {
@@ -59,6 +66,8 @@ function hindsightSchema(overrides: Partial<MemoryProviderConfig['fields'][numbe
       description: '',
       placeholder: '',
       is_set: true,
+      group: 'general',
+      inline: false,
       options: []
     },
     {
@@ -69,6 +78,8 @@ function hindsightSchema(overrides: Partial<MemoryProviderConfig['fields'][numbe
       description: '',
       placeholder: '',
       is_set: true,
+      group: 'general',
+      inline: false,
       options: [
         { value: 'low', label: 'low', description: '' },
         { value: 'mid', label: 'mid', description: '' },

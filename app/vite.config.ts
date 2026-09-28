@@ -288,7 +288,8 @@ export default defineConfig({
   // adopted verbatim from upstream — they run via `npm run test:plugins`, not
   // vitest, so exclude them from vitest's default glob.
   test: {
-    exclude: [...configDefaults.exclude, 'src/plugins/*/tests/**']
+    exclude: [...configDefaults.exclude, 'src/plugins/*/tests/**'],
+    setupFiles: ['src/vitest.setup.ts']
   },
   // Per-build id, read by the React Query persistence layer as a cache buster so
   // a redeploy (or dev restart) drops any persisted query blob whose data shape
