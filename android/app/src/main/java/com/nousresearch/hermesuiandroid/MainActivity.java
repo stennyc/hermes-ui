@@ -99,31 +99,6 @@ public class MainActivity extends BridgeActivity {
                     );
                 }
 
-                // Inject CORS proxy script to handle cross-origin requests
-                // This wraps fetch to proxy through the same-origin gateway
-                view.evaluateJavascript(
-                    "(function() { " +
-                    "  const proxyTarget = '" + GATEWAY_URL.replace("http://", "").replace("https://", "") + "'; " +
-                    "  const originalFetch = window.fetch; " +
-                    "  window.fetch = function(url, options) { " +
-                    "    // If this is a cross-origin request to another gateway, proxy it through the current origin " +
-                    "    try { " +
-                    "      const targetUrl = new URL(url); " +
-                    "      const currentOrigin = new URL(window.location.href).origin; " +
-                    "      if (targetUrl.origin !== currentOrigin && (url.includes('/api/') || url.includes('/auth/') || url.includes('/login'))) { " +
-                    "        // Rewrite to proxy through current gateway " +
-                    "        const proxiedUrl = currentOrigin + url; " +
-                    "        console.log('[CORS Proxy]', 'Rewriting', url, '->', proxiedUrl); " +
-                    "        url = proxiedUrl; " +
-                    "      } " +
-                    "    } catch(e) { " +
-                    "      // Invalid URL, proceed normally " +
-                    "    } " +
-                    "    return originalFetch.apply(this, arguments); " +
-                    "  }; " +
-                    "})()",
-                    null
-                );
             }
         });
     }
