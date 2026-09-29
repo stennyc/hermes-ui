@@ -2,8 +2,7 @@ import {
   AssistantRuntimeImpl,
   BaseAssistantRuntimeCore,
   ExternalStoreThreadListRuntimeCore,
-  ExternalStoreThreadRuntimeCore,
-  hasUpcomingMessage
+  ExternalStoreThreadRuntimeCore
 } from '@assistant-ui/core/internal'
 import {
   type AssistantRuntime,
@@ -96,7 +95,14 @@ export function syncRepositoryIncrementally(
   // whole-transcript rewrite, the prune scan, and the second export. resetHead
   // deletes the head's descendants, so it only runs when the head really moved.
   if (!disjoint && applyChangedMessages(repository, existing, incoming)) {
-    if (repository.headId !== headId) {
+    // Compare the CANONICAL (non-optimistic) head against the export's head:
+    // the live head may sit on the optimistic placeholder minted by the
+    // caller, which `headId` reports as a different id even when the real
+    // tail never moved. Resetting on that false difference every round
+    // evicts the placeholder (lib evictOffBranchOptimisticMessages),
+    // re-dirties the _messages cache, and reopens the render-loop that the
+    // caller's content gate is supposed to close.
+    if (repository.canonicalHeadId !== headId) {
       repository.resetHead(headId)
     }
 
@@ -205,37 +211,122 @@ class IncrementalExternalStoreThreadRuntimeCore extends ExternalStoreThreadRunti
       return
     }
 
-    if (self._assistantOptimisticId) {
-      this.repository.deleteMessage(self._assistantOptimisticId)
-      self._assistantOptimisticId = null
-    }
+    // Capture before-state for the notify gate below. The full path is
+    // entered when messageRepository REF changed (streaming republishes a
+    // fresh array ~30x/s) even if the CONTENT is identical. Without a
+    // content-aware gate, _notifySubscribers() fires on every republish,
+    // re-triggers the subscriber → re-render → setAdapter → notify loop
+    // that React kills with "Maximum update depth exceeded".
+    const prevMessages = self._messages ?? EMPTY_ARRAY
+    const isRunningFlipped = (oldStore?.isRunning ?? false) !== (store.isRunning ?? false)
+    const isInitial = oldStore === undefined || oldStore === null
 
+    // PLACEHOLDER REUSE, not delete+re-mint. The old code deleted the
+    // placeholder and minted a fresh generateId() one on EVERY full-path
+    // entry. During steady streaming the full path runs on every republish
+    // (fresh messageRepository ref, identical content), so the delete
+    // (lib _messages.dirty()) + re-mint (dirty) + resetHead eviction cycle
+    // kept getMessages() returning a FRESH array every round and the
+    // content gate below could never close the loop. The placeholder is
+    // pure ephemeral state: keep the SAME id while it is still wanted,
+    // delete only when it goes away, mint only when it was absent.
     const messages = syncRepositoryIncrementally(this, store.messageRepository)
 
     if (messages.length > 0) {
       this.ensureInitialized()
     }
 
-    if ((oldStore?.isRunning ?? false) !== (store.isRunning ?? false)) {
+    if (isRunningFlipped) {
       self._notifyEventSubscribers(store.isRunning ? 'runStart' : 'runEnd', {})
     }
 
-    // metadata.isOptimistic keeps this placeholder ephemeral: core evicts
-    // off-branch optimistic messages on head moves and omits them from export().
-    if (hasUpcomingMessage(isRunning, messages)) {
+    // PLACEHOLDER REUSE, not delete+re-mint. The old code deleted the
+    // placeholder and minted a fresh generateId() one on EVERY full-path
+    // entry. During steady streaming the full path runs on every republish
+    // (fresh messageRepository ref, identical content), so the delete
+    // (lib _messages.dirty()) + re-mint (dirty) + resetHead eviction cycle
+    // kept getMessages() returning a FRESH array every round and the
+    // content gate below could never close the loop. The placeholder is
+    // pure ephemeral state: keep the SAME id while it is still wanted and
+    // still parented correctly, delete only when it goes away, mint only
+    // when absent or re-parented.
+    const prevPlaceholderId = self._assistantOptimisticId ?? null
+    // While the placeholder is ALIVE it sits at the head (end of the head
+    // branch) of the snapshot syncRepositoryIncrementally returns, so the
+    // last REAL message is at(-2). After a disjoint/thread-switch rebuild
+    // the live sync evicts it and the stale id must not be re-queried:
+    // detect liveness from the snapshot tail, not from the id alone.
+    const last = messages.at(-1)
+    const placeholderAlive = last?.id === prevPlaceholderId
+    const tail = placeholderAlive ? messages.at(-2) : last
+    const wantsPlaceholder = isRunning && tail?.role !== 'assistant'
+    const placeholderParent =
+      placeholderAlive && prevPlaceholderId
+        ? (this.repository.getMessage(prevPlaceholderId).parentId ?? null)
+        : null
+    if (prevPlaceholderId && placeholderAlive && !wantsPlaceholder) {
+      // Turn ended or a settled assistant reply landed: drop the spinner.
+      this.repository.deleteMessage(prevPlaceholderId)
+      self._assistantOptimisticId = null
+    } else if (wantsPlaceholder && !(placeholderAlive && placeholderParent === (tail?.id ?? null))) {
+      // No live placeholder, or the real tail moved under it: re-parent
+      // (delete + mint) so the placeholder always follows the live tail.
+      if (prevPlaceholderId && placeholderAlive) {
+        this.repository.deleteMessage(prevPlaceholderId)
+      }
       const optimisticId = generateId()
       this.repository.addOrUpdateMessage(
-        messages.at(-1)?.id ?? null,
+        tail?.id ?? null,
         fromThreadMessageLike({ role: 'assistant', content: [], metadata: { isOptimistic: true } }, optimisticId, {
           type: 'running'
         })
       )
       self._assistantOptimisticId = optimisticId
+    } else {
+      // Keep-or-clear bookkeeping: a stale id whose placeholder the sync
+      // already evicted must not survive into the targetHead computation.
+      self._assistantOptimisticId = placeholderAlive ? prevPlaceholderId : null
     }
 
-    this.repository.resetHead(self._assistantOptimisticId ?? messages.at(-1)?.id ?? null)
+    // Only resetHead when the target actually differs from the current head.
+    // The lib's resetHead() unconditionally calls _messages.dirty(), so an
+    // idempotent reset (head already at target) would recompute getMessages()
+    // into a FRESH array and defeat the content-aware gate below. A streaming
+    // no-op (identical content, fresh repository ref, placeholder REUSED)
+    // performs zero writes, keeps the cache clean, and getMessages() returns
+    // the same ref. The target is the live placeholder when present, else
+    // the last REAL tail — never the snapshot tail, which may be the
+    // placeholder we just deleted.
+    const targetHeadId = self._assistantOptimisticId ?? tail?.id ?? null
+    if (targetHeadId !== this.repository.headId) {
+      this.repository.resetHead(targetHeadId)
+    }
     self._messages = this.repository.getMessages()
-    self._notifySubscribers()
+
+    // Gate: only notify when something OBSERVABLE actually changed.
+    // - contentChanged: the message array ref moved (new tail written, head
+    //   reset, or disjoint rebuild). The placeholder is internal state: a
+    //   swap of the placeholder id itself is NOT observable, so only the
+    //   PLACE-HOLDER-SLOT occupancy (present vs absent) counts, not the id.
+    // - isRunningFlipped: turn start/stop must reach the thread UI.
+    // - isInitial: first adapter set must notify to hydrate the thread.
+    // A streaming delta that republishes identical content with a fresh
+    // messageRepository ref produces a no-op repository sync — getMessages()
+    // returns the SAME internal ref, so contentChanged is false and we skip
+    // the notify that would start the unbounded feedback loop.
+    // Ref-stable gate: getMessages() returns the SAME cached array whenever
+    // nothing wrote since the last read. The placeholder is now REUSED (not
+    // re-minted), so a no-op streaming round performs zero writes and the
+    // ref comparison closes the loop. A real change (new tail, head move,
+    // disjoint rebuild, placeholder mint/evict) dirties the cache and the
+    // ref moves — notifying exactly then.
+    const contentChanged = self._messages !== prevMessages
+    // `changed` (disabled/extras/suggestions/capabilities) is computed up top
+    // and reused here: a flip of any of those is an observable change that
+    // must reach subscribers even on a no-op repository sync.
+    if (isInitial || contentChanged || isRunningFlipped || changed) {
+      self._notifySubscribers()
+    }
   }
 }
 

@@ -38,6 +38,10 @@ function message(id: string, text: string): ThreadMessage {
   return fromThreadMessageLike({ role: 'assistant', content: [{ type: 'text', text }] }, id, STATUS)
 }
 
+function userMessage(id: string, text: string): ThreadMessage {
+  return fromThreadMessageLike({ role: 'user', content: [{ type: 'text', text }] }, id, STATUS)
+}
+
 function repositoryOf(messages: ThreadMessage[]): ExportedMessageRepository {
   return {
     headId: messages.at(-1)?.id ?? null,
@@ -166,5 +170,96 @@ describe('IncrementalExternalStoreThreadRuntimeCore adapter swap notifications',
     core.setAdapter(adapterWith(repo))
 
     expect(depth).toBe(0)
+  })
+
+  it('does NOT notify when a streaming delta republishes identical content under a fresh repository ref (full-path no-op)', () => {
+    // Distinct from the render-loop guard above: here the guard at the same
+    // isRunning + same repo identity does NOT fire (repo1 !== repo2), so the
+    // FULL path runs. But the content is referentially identical, so the sync
+    // is a no-op and getMessages() returns the same internal ref — the new
+    // content-aware gate must suppress the notify that used to start the
+    // unbounded streaming feedback loop.
+    const a = message('a', 'one')
+    const b = message('b', 'two')
+    const repo1 = repositoryOf([a, b])
+    const repo2 = repositoryOf([a, b]) // fresh object, same underlying message refs
+
+    const core = new IncrementalExternalStoreRuntimeCore(adapterWith(repo1))
+    const thread = core.threads.getMainThreadRuntimeCore()
+
+    let notifications = 0
+    thread.subscribe(() => {
+      notifications += 1
+    })
+
+    // repo1 !== repo2 forces the full path; identical content must stay silent.
+    core.setAdapter(adapterWith(repo2))
+
+    expect(notifications).toBe(0)
+  })
+
+  it('still notifies when a fresh repository ref carries new content (streaming tail growth)', () => {
+    const a = message('a', 'one')
+    const b = message('b', 'two')
+    const repo1 = repositoryOf([a, b])
+
+    const core = new IncrementalExternalStoreRuntimeCore(adapterWith(repo1))
+    const thread = core.threads.getMainThreadRuntimeCore()
+
+    let notifications = 0
+    thread.subscribe(() => {
+      notifications += 1
+    })
+
+    const c = message('c', 'three')
+    const repo2 = repositoryOf([a, b, c]) // fresh ref, NEW tail
+
+    core.setAdapter(adapterWith(repo2))
+
+    expect(notifications).toBeGreaterThan(0)
+  })
+
+  it('streaming no-op (isRunning + user tail + placeholder) notifies once, then stays silent across fresh-adapter repeats', () => {
+    // The live crash path: a running turn whose external transcript ends on a
+    // USER message. The core mints an optimistic placeholder under the tail
+    // and, on every full-path re-entry (fresh adapter literal per render,
+    // fresh messageRepository ref, IDENTICAL content) the old code deleted
+    // the placeholder and minted a fresh-id one, dirtying getMessages() each
+    // round so the content gate never closed. With placeholder REUSE the
+    // steady-state round performs zero writes: the first entry (placeholder
+    // mint) must notify, every subsequent no-op repeat must NOT.
+    const user = userMessage('u', 'ask')
+    const repo1 = repositoryOf([user])
+
+    const core = new IncrementalExternalStoreRuntimeCore(adapterWith(repo1))
+    const thread = core.threads.getMainThreadRuntimeCore()
+
+    let notifications = 0
+    thread.subscribe(() => {
+      notifications += 1
+    })
+
+    // Entry 1: placeholder minted (new observable state) -> exactly 1.
+    const repo2 = repositoryOf([user]) // fresh object, same content
+    core.setAdapter(adapterWith(repo2, { isRunning: true }))
+    expect(notifications).toBe(1)
+
+    // Entries 2-12: identical content, fresh refs each time, placeholder
+    // still wanted. Zero notifies on top of entry 1.
+    for (let round = 2; round <= 12; round += 1) {
+      core.setAdapter(adapterWith(repositoryOf([user]), { isRunning: true }))
+    }
+    expect(notifications).toBe(1)
+
+    // A REAL delta (settled assistant reply appended, tail becomes assistant
+    // -> placeholder evicted) must notify again.
+    const reply = message('r', 'answer')
+    core.setAdapter(adapterWith(repositoryOf([user, reply]), { isRunning: true }))
+    expect(notifications).toBe(2)
+
+    // isRunning clears with no content change: the placeholder-drop already
+    // notified; the flip itself is a further observable change.
+    core.setAdapter(adapterWith(repositoryOf([user, reply]), { isRunning: false }))
+    expect(notifications).toBe(3)
   })
 })
