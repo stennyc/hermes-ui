@@ -384,18 +384,37 @@ async function toConnectionConfig(stored: StoredConnection): Promise<DesktopConn
   }
 }
 
-/** GET /api/status against an arbitrary base, bypassing the auth header path. */
+/**
+ * GET /api/status against an arbitrary base, bypassing the auth header path.
+ * An optional `token` presents a candidate session token; a rejection is
+ * reported via `auth_rejected` instead of throwing, so callers can tell a
+ * bad token apart from an unreachable gateway.
+ */
 async function fetchStatus(
   base: string,
-  origin: string | null = null
-): Promise<{ auth_providers?: string[]; auth_required?: boolean; version?: string } | null> {
+  origin: string | null = null,
+  token?: string
+): Promise<
+  { auth_providers?: string[]; auth_required?: boolean; auth_rejected?: boolean; version?: string } | null
+> {
   const credentials = isCapacitorWebView() ? 'omit' : 'same-origin'
   const res = await fetch(withGatewayRoute(`${base}/api/status`, origin), {
     credentials,
+    headers: token ? { 'X-Hermes-Session-Token': token } : undefined,
     signal: AbortSignal.timeout(8_000)
   })
 
-  if (!res.ok) {throw new Error(`${res.status}: ${res.statusText}`)}
+  if (!res.ok) {
+    // 401/403: the gateway ANSWERED — it is up and running, it just requires
+    // auth. Reporting this as "unreachable" makes the reachability test lie
+    // about gateways that need a session/token, so surface it as reachable
+    // with auth required and let the UI offer the sign-in/token path.
+    if (res.status === 401 || res.status === 403) {
+      return { auth_required: true, auth_rejected: Boolean(token), auth_providers: [], version: undefined }
+    }
+
+    throw new Error(`${res.status}: ${res.statusText}`)
+  }
 
   return (await res.json()) as { auth_providers?: string[]; auth_required?: boolean; version?: string }
 }
@@ -600,8 +619,18 @@ export function createWebBridge(): Window['hermesDesktop'] {
     testConnectionConfig: async input => {
       const remoteUrl = input?.remoteUrl ?? loadStoredConnection().remoteUrl
       const base = normalizeBase(remoteUrl)
+      // Verify a token-mode candidate token by presenting it: a rejection is
+      // an AUTH failure, not a reachability one — report it as such.
+      const token =
+        input?.remoteAuthMode === 'token'
+          ? (input.remoteToken?.trim() || loadStoredConnection().remoteToken || undefined)
+          : undefined
       // Route by the gateway being tested (not the active one).
-      const status = await fetchStatus(base, upstreamOriginFor(remoteUrl))
+      const status = await fetchStatus(base, upstreamOriginFor(remoteUrl), token)
+
+      if (status?.auth_rejected) {
+        throw new Error('Session token was rejected by the gateway')
+      }
 
       return { baseUrl: base, ok: true, version: status?.version ?? null }
     },

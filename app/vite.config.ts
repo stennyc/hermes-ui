@@ -288,6 +288,11 @@ export default defineConfig({
   // adopted verbatim from upstream — they run via `npm run test:plugins`, not
   // vitest, so exclude them from vitest's default glob.
   test: {
+    // NOTE: default environment is `node`. Files that render React DOM must
+    // carry a per-file `// @vitest-environment jsdom` directive at their top
+    // (repo convention) — do NOT flip the global default to jsdom, that pulls
+    // every test into jsdom and breaks ~130 node-based suites on missing
+    // browser APIs (e.g. ResizeObserver in Radix components).
     exclude: [...configDefaults.exclude, 'src/plugins/*/tests/**'],
     setupFiles: ['src/vitest.setup.ts']
   },

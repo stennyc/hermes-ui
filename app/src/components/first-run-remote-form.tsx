@@ -122,7 +122,10 @@ export function FirstRunRemoteForm({ onBack }: FirstRunRemoteFormProps) {
   const currentPayloadKey = JSON.stringify(payload())
   const payloadKeyRef = useRef(currentPayloadKey)
   payloadKeyRef.current = currentPayloadKey
-  const canApply = lastTestedPayloadKey === currentPayloadKey
+  // Applying a remote config must not be gated on a successful connection
+  // test: the test only reports reachability, while the URL is a valid
+  // config even if the gateway is offline or unreachable from this page.
+  const canApply = Boolean(trimmedUrl)
 
   const signIn = async () => {
     if (!trimmedUrl) {

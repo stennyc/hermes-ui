@@ -268,6 +268,10 @@ export function GatewaySettings({ embedded = false }: { embedded?: boolean } = {
   const [probe, setProbe] = useState<DesktopConnectionProbeResult | null>(null)
   const probeSeq = useRef(0)
 
+  // Password login fields (for basic auth gateways)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+
   useEffect(() => {
     let cancelled = false
     const desktop = window.hermesDesktop
@@ -482,18 +486,6 @@ export function GatewaySettings({ embedded = false }: { embedded?: boolean } = {
 
   const oauthConnected = state.remoteOauthConnected
 
-  const canUseRemote = useMemo(() => {
-    if (!trimmedUrl) {
-      return false
-    }
-
-    if (authMode === 'oauth') {
-      return oauthConnected
-    }
-
-    return Boolean(remoteToken.trim()) || state.remoteTokenSet
-  }, [authMode, oauthConnected, remoteToken, state.remoteTokenSet, trimmedUrl])
-
   const payload = (allowPlainTextToken?: boolean) => ({
     mode: state.mode,
     remoteAuthMode: authMode,
@@ -581,12 +573,12 @@ export function GatewaySettings({ embedded = false }: { embedded?: boolean } = {
   }
 
   const save = async (apply: boolean) => {
-    if (state.mode === 'remote' && !canUseRemote) {
-      notify({
-        kind: 'warning',
-        title: g.incompleteTitle,
-        message: authMode === 'oauth' ? g.incompleteSignIn : g.incompleteToken
-      })
+    // Save must not be gated on the connection test: the user picks whether a
+    // failed probe blocks a SAVE. A remote config is valid without a live
+    // answer from the gateway (CORS block, offline gateway, token not pasted
+    // yet), so the only requirement is a URL.
+    if (state.mode === 'remote' && !trimmedUrl) {
+      notify({ kind: 'warning', title: g.incompleteTitle, message: g.enterUrlFirst })
 
       return
     }
@@ -609,43 +601,72 @@ export function GatewaySettings({ embedded = false }: { embedded?: boolean } = {
 
     if (!trimmedUrl) {
       notify({ kind: 'warning', title: g.incompleteTitle, message: g.enterUrlFirst })
-
       return
     }
 
     setSigningIn(true)
 
     try {
-      // Save (don't apply/restart) so the login window has a URL to use and the
-      // oauth mode is persisted, without yet flipping the live connection.
-      const saved = await window.hermesDesktop.saveConnectionConfig({
-        mode: state.mode,
-        remoteAuthMode: 'oauth',
-        remoteUrl: trimmedUrl
-      })
-
-      if (seq !== signingSeq.current) {
-        return
-      }
-
-      acceptSavedConfig(saved)
-
-      const result = await window.hermesDesktop.oauthLoginConnectionConfig(trimmedUrl)
-
-      if (seq !== signingSeq.current) {
-        return
-      }
-
-      if (result.connected) {
-        const refreshed = await window.hermesDesktop.getConnectionConfig(null)
-        acceptSavedConfig(refreshed)
-        notify({ kind: 'success', title: g.signedIn, message: g.connectedTo(providerLabel) })
-      } else {
-        notify({
-          kind: 'warning',
-          title: t.boot.failure.signInIncompleteTitle,
-          message: t.boot.failure.signInIncompleteMessage
+      // For password providers, do direct auth instead of OAuth flow
+      if (isPasswordProvider && authMode !== 'oauth') {
+        const res = await fetch(`${trimmedUrl}/auth/password-login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            provider: 'basic',
+            username: username.trim(),
+            password: password
+          })
         })
+        const data = await res.json()
+        if (res.ok && data.ok) {
+          // Save config with token mode since password auth creates a session
+          const saved = await window.hermesDesktop.saveConnectionConfig({
+            mode: state.mode,
+            remoteAuthMode: 'token',
+            remoteUrl: trimmedUrl
+          })
+          acceptSavedConfig(saved)
+          notify({ kind: 'success', title: g.signedIn, message: g.connectedTo(providerLabel) })
+          // Clear credentials after successful login
+          setUsername('')
+          setPassword('')
+        } else {
+          notify({ kind: 'error', title: g.signInFailed, message: data.detail || 'Invalid credentials' })
+        }
+      } else {
+        // Save (don't apply/restart) so the login window has a URL to use and the
+        // oauth mode is persisted, without yet flipping the live connection.
+        const saved = await window.hermesDesktop.saveConnectionConfig({
+          mode: state.mode,
+          remoteAuthMode: 'oauth',
+          remoteUrl: trimmedUrl
+        })
+
+        if (seq !== signingSeq.current) {
+          return
+        }
+
+        acceptSavedConfig(saved)
+
+        const result = await window.hermesDesktop.oauthLoginConnectionConfig(trimmedUrl)
+
+        if (seq !== signingSeq.current) {
+          return
+        }
+
+        if (result.connected) {
+          const refreshed = await window.hermesDesktop.getConnectionConfig(null)
+          acceptSavedConfig(refreshed)
+          notify({ kind: 'success', title: g.signedIn, message: g.connectedTo(providerLabel) })
+        } else {
+          notify({
+            kind: 'warning',
+            title: t.boot.failure.signInIncompleteTitle,
+            message: t.boot.failure.signInIncompleteMessage
+          })
+        }
       }
     } catch (err) {
       if (seq === signingSeq.current) {
@@ -667,15 +688,34 @@ export function GatewaySettings({ embedded = false }: { embedded?: boolean } = {
     setSigningIn(true)
 
     try {
-      await window.hermesDesktop.oauthLogoutConnectionConfig(trimmedUrl)
-      const refreshed = await window.hermesDesktop.getConnectionConfig(null)
+      // For password providers, do direct logout instead of OAuth flow
+      if (isPasswordProvider && authMode !== 'oauth') {
+        await fetch(`${trimmedUrl}/auth/logout`, {
+          method: 'POST',
+          credentials: 'include'
+        })
+        // Clear credentials
+        setUsername('')
+        setPassword('')
+        // Save config with token mode to clear the auth state
+        const saved = await window.hermesDesktop.saveConnectionConfig({
+          mode: state.mode,
+          remoteAuthMode: 'token',
+          remoteUrl: trimmedUrl
+        })
+        acceptSavedConfig(saved)
+        notify({ kind: 'success', title: g.signedOutTitle, message: g.signedOutMessage })
+      } else {
+        await window.hermesDesktop.oauthLogoutConnectionConfig(trimmedUrl)
+        const refreshed = await window.hermesDesktop.getConnectionConfig(null)
 
-      if (seq !== signingSeq.current) {
-        return
+        if (seq !== signingSeq.current) {
+          return
+        }
+
+        acceptSavedConfig(refreshed)
+        notify({ kind: 'success', title: g.signedOutTitle, message: g.signedOutMessage })
       }
-
-      acceptSavedConfig(refreshed)
-      notify({ kind: 'success', title: g.signedOutTitle, message: g.signedOutMessage })
     } catch (err) {
       if (seq === signingSeq.current) {
         notifyError(err, g.signOutFailed)
@@ -1055,12 +1095,11 @@ export function GatewaySettings({ embedded = false }: { embedded?: boolean } = {
   const testRemote = async () => {
     const seq = ++sshTestSeq.current
 
-    if (!canUseRemote) {
-      notify({
-        kind: 'warning',
-        title: g.incompleteTitle,
-        message: authMode === 'oauth' ? g.incompleteSignInTest : g.incompleteTokenTest
-      })
+    // Testing only needs the URL: it IS the reachability check. Requiring a
+    // sign-in/token first would make the test meaningless for a gateway the
+    // user has not yet connected to.
+    if (!trimmedUrl) {
+      notify({ kind: 'warning', title: g.incompleteTitle, message: g.enterUrlFirst })
 
       return
     }
@@ -1383,7 +1422,14 @@ export function GatewaySettings({ embedded = false }: { embedded?: boolean } = {
           {state.mode === 'remote' && probeStatus === 'error' ? (
             <div className="flex items-start gap-2 py-3 text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
               <AlertCircle className="mt-0.5 size-4 shrink-0" />
-              {g.probeError}
+              <div>
+                {g.probeError}
+                {/* Surface the real probe error (CORS block, 401, timeout) so a
+                    "can't reach" verdict is checkable instead of a guess. */}
+                {probe?.error ? (
+                  <div className="mt-1 font-mono text-xs break-all">{probe.error}</div>
+                ) : null}
+              </div>
             </div>
           ) : null}
 
@@ -1420,6 +1466,38 @@ export function GatewaySettings({ embedded = false }: { embedded?: boolean } = {
               title={g.authTitle}
             />
           ) : null}
+
+          {/* Password login form for basic auth gateways */}
+          {state.mode === 'remote' && authResolved && isPasswordProvider && authMode !== 'oauth' && (
+            <div className="mt-4 space-y-3 px-4 py-3 rounded-lg border border-(--ui-stroke-tertiary) bg-(--ui-surface-secondary)">
+              <div className="text-sm font-medium">{g.authTitle}</div>
+              <div className="grid gap-2">
+                <Input
+                  autoComplete="username"
+                  placeholder="Username"
+                  value={username}
+                  onChange={e => setUsername(e.target.value)}
+                  className="h-9"
+                />
+                <Input
+                  autoComplete="current-password"
+                  placeholder="Password"
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  className="h-9"
+                />
+              </div>
+              <Button
+                disabled={signingIn || !username.trim() || !password.trim()}
+                onClick={() => void signIn()}
+                className="w-full"
+              >
+                {signingIn ? <Loader2 className="animate-spin" /> : <LogIn />}
+                {g.signIn}
+              </Button>
+            </div>
+          )}
 
           {/* Session-token gateways: keep the existing token entry box. */}
           {state.mode === 'remote' && authResolved && authMode === 'token' ? (
@@ -1573,7 +1651,7 @@ export function GatewaySettings({ embedded = false }: { embedded?: boolean } = {
           {state.mode === 'remote' ? (
             <Button
               className="mr-auto"
-              disabled={state.envOverride || testing || !canUseRemote}
+              disabled={state.envOverride || testing || !trimmedUrl}
               onClick={() => void testRemote()}
               size="sm"
               variant="text"

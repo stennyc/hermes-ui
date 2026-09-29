@@ -86,6 +86,9 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.useRealTimers()
+  // Test 4 stubs the global fetch (password sign-in path); always unstub so
+  // it can't leak into the next test's real-window fetch.
+  vi.unstubAllGlobals()
   Reflect.deleteProperty(window, 'hermesDesktop')
 })
 
@@ -231,7 +234,7 @@ describe('DesktopInstallOverlay first-run setup', () => {
     expect(screen.getByText('Install Hermes locally')).toBeTruthy()
   })
 
-  it('requires a successful token connection test before applying remote config', async () => {
+  it('enables Apply as soon as a URL is entered, even before a successful connection test', async () => {
     const desktop = installDesktopMock(
       bootstrapState({
         setupChoice: { platform: 'linux', activeRoot: '/home/me/.hermes/hermes-agent' }
@@ -265,7 +268,9 @@ describe('DesktopInstallOverlay first-run setup', () => {
     })
 
     const apply = screen.getByText('Apply and reconnect').closest('button') as HTMLButtonElement
-    expect(apply.disabled).toBe(true)
+    // New contract: applying a remote config must not be gated on a
+    // successful connection test — a URL alone is a savable config.
+    expect(apply.disabled).toBe(false)
 
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 550))
@@ -341,11 +346,13 @@ describe('DesktopInstallOverlay first-run setup', () => {
     })
 
     expect(screen.queryByPlaceholderText('Paste session token')).toBeNull()
+    // Test button stays gated on a plausible URL, but Apply no longer
+    // requires a passed test — entering the URL makes it available.
     expect((screen.getByText('Test connection').closest('button') as HTMLButtonElement).disabled).toBe(true)
-    expect((screen.getByText('Apply and reconnect').closest('button') as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByText('Apply and reconnect').closest('button') as HTMLButtonElement).disabled).toBe(false)
   })
 
-  it('does not enable Apply when credentials change during a connection test', async () => {
+  it('leaves Apply available when credentials change during a connection test', async () => {
     const desktop = installDesktopMock(
       bootstrapState({
         setupChoice: { platform: 'linux', activeRoot: '/home/me/.hermes/hermes-agent' }
@@ -395,7 +402,8 @@ describe('DesktopInstallOverlay first-run setup', () => {
     })
 
     expect(screen.queryByText('Connected to https://gateway.example.com/hermes (0.17.0).')).toBeNull()
-    expect(apply.disabled).toBe(true)
+    // New contract: a stale/failed test must not disable Apply.
+    expect(apply.disabled).toBe(false)
   })
 
   it('restores remote apply controls when applying the tested connection fails', async () => {
@@ -460,17 +468,17 @@ describe('DesktopInstallOverlay first-run setup', () => {
       reachable: true,
       version: '0.17.0'
     })
-    desktop.oauthLoginConnectionConfig.mockResolvedValue({
-      baseUrl: 'https://gateway.example.com/hermes',
-      connected: true,
-      ok: true
-    })
     desktop.testConnectionConfig.mockResolvedValue({
       baseUrl: 'https://gateway.example.com/hermes',
       ok: true,
       version: null
     })
     desktop.applyConnectionConfig.mockResolvedValue({ mode: 'remote' })
+
+    // The password sign-in path calls fetch() directly (POST /auth/
+    // password-login); stub it so the flow completes without a network.
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) })
+    vi.stubGlobal('fetch', fetchMock)
 
     render(<DesktopInstallOverlay />)
 
@@ -487,7 +495,10 @@ describe('DesktopInstallOverlay first-run setup', () => {
     fireEvent.click(await screen.findByText('Sign in'))
 
     await waitFor(() => {
-      expect(desktop.oauthLoginConnectionConfig).toHaveBeenCalledWith('https://gateway.example.com/hermes')
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://gateway.example.com/hermes/auth/password-login',
+        expect.objectContaining({ method: 'POST' })
+      )
     })
 
     fireEvent.click(screen.getByText('Test connection'))
