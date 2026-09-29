@@ -175,6 +175,30 @@ export function advanceTranscriptWindow(
 export const MAX_SESSION_WINDOWS = 12
 
 /**
+ * Hard cap on how many window pages materialize into the runtime.
+ *
+ * Each page is one TRANSCRIPT_WINDOW_BUDGET of render weight (~1200 units),
+ * so the cap bounds worst-case normalization/repository work at 4 pages
+ * (~4800 units). DOM paint stays bounded by the pane render budget anyway —
+ * this caps per-flush work done at the runtime, not what is visible.
+ *
+ * Hitting the cap retires the local re-slice ("Show earlier" window action)
+ * via `growWindowPages`; store backfill pages (restBackfill) keep working
+ * because they widen the window's source rather than piling on materialized
+ * content.
+ */
+export const MAX_WINDOW_PAGES = 4
+
+/**
+ * One step of "Show earlier" in window-page terms, clamped at the cap.
+ * Use as a React state updater so the clamp applies on every increment path
+ * (manual button, auto-grown restore, backfill merge).
+ */
+export function growWindowPages(pages: number): number {
+  return Math.min(pages + 1, MAX_WINDOW_PAGES)
+}
+
+/**
  * A window state plus the exact message array it was computed from.
  * The array identity is load-bearing: when a session is re-entered with the
  * IDENTICAL transcript (the warm-switch path of #95595), the stored window —

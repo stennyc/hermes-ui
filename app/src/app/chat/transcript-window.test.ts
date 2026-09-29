@@ -7,7 +7,9 @@ import {
   advanceSessionTranscriptWindow,
   advanceTranscriptWindow,
   alignToBranchGroup,
+  growWindowPages,
   MAX_SESSION_WINDOWS,
+  MAX_WINDOW_PAGES,
   selectTranscriptWindow,
   TRANSCRIPT_WINDOW_BUDGET,
   TRANSCRIPT_WINDOW_MIN_MESSAGES,
@@ -294,6 +296,19 @@ describe('advanceSessionTranscriptWindow', () => {
     expect(memos.size).toBeLessThanOrEqual(MAX_SESSION_WINDOWS)
     expect(memos.has('session-0')).toBe(false)
     expect(memos.has(`session-${MAX_SESSION_WINDOWS + 4}`)).toBe(true)
+  })
+})
+
+describe('growWindowPages', () => {
+  it('increments until it reaches the cap', () => {
+    expect(growWindowPages(1)).toBe(2)
+    expect(growWindowPages(2)).toBe(3)
+    expect(growWindowPages(MAX_WINDOW_PAGES - 1)).toBe(MAX_WINDOW_PAGES)
+  })
+
+  it('clamps at the cap and never exceeds it', () => {
+    expect(growWindowPages(MAX_WINDOW_PAGES)).toBe(MAX_WINDOW_PAGES)
+    expect(growWindowPages(MAX_WINDOW_PAGES + 5)).toBe(MAX_WINDOW_PAGES)
   })
 })
 

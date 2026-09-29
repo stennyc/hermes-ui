@@ -80,7 +80,7 @@ import {
   mergeOlderTranscriptPage,
   transcriptBackfillAvailable
 } from './transcript-backfill'
-import { advanceSessionTranscriptWindow, type SessionWindowMemo } from './transcript-window'
+import { advanceSessionTranscriptWindow, growWindowPages, MAX_WINDOW_PAGES, type SessionWindowMemo } from './transcript-window'
 
 interface ChatViewProps extends Omit<React.ComponentProps<'div'>, 'onSubmit'> {
   gateway: HermesGateway | null
@@ -276,6 +276,11 @@ export function ChatRuntimeBoundary({
 
   const [windowPages, setWindowPages] = useState(1)
   const [windowSessionKey, setWindowSessionKey] = useState(runtimeId)
+  // Render-time snapshot of windowPages. expandWindow's useCallback dep list
+  // intentionally omits the live value (its increments are functional), so a
+  // cap check inside it must read this ref, not a stale closure.
+  const windowPagesRef = useRef(windowPages)
+  windowPagesRef.current = windowPages
   // Per-session sticky-cut continuity (advanceSessionTranscriptWindow). A ref,
   // not state: it is derived from `messages` and must never trigger a render.
   // Keyed by runtime id so a warm switch back to a session whose transcript
@@ -348,7 +353,7 @@ export function ChatRuntimeBoundary({
             }
 
             beforePrepend?.()
-            setWindowPages(pages => pages + 1)
+            setWindowPages(growWindowPages)
             sessionTileDelegate()?.updateSession(runtimeId, state => {
               const merged = mergeOlderTranscriptPage(state.messages, olderPage)
               grew = merged !== state.messages
@@ -363,8 +368,16 @@ export function ChatRuntimeBoundary({
         return grew
       }
 
+      // Render limit: the local window path is the one that can grow without
+      // bound — each "Show earlier" re-slices a wider window into the runtime.
+      // At the cap, stop widening and release the parked restore instead of
+      // re-firing expandWindow against a no-op.
+      if (windowPagesRef.current >= MAX_WINDOW_PAGES) {
+        return false
+      }
+
       beforePrepend?.()
-      setWindowPages(pages => pages + 1)
+      setWindowPages(growWindowPages)
 
       return true
     },
@@ -373,7 +386,14 @@ export function ChatRuntimeBoundary({
 
   // Page navigation stays on the timeline while inspecting history; the
   // existing prepend action is specifically a live-tail operation.
-  const olderAvailable = !history.page && (windowed || restBackfillAvailable)
+  //
+  // The local re-slice ("Show earlier" window action) is only advertised while
+  // it can still grow: past the cap, expandWindow is a no-op, so keep the
+  // affordance honest and drop it. Store backfill (restBackfillAvailable) is
+  // server-bounded and stays available; DOM reveal (hiddenCount > 0 in the
+  // list) is independent of this flag and still pages the materialized window.
+  const localWindowUsable = windowed && windowPagesRef.current < MAX_WINDOW_PAGES
+  const olderAvailable = !history.page && (localWindowUsable || restBackfillAvailable)
   const isHistorical = Boolean(history.page)
   const newerAvailable = history.page?.newerAvailable ?? false
   const { revealRow, returnToLatest } = history
