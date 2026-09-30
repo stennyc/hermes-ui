@@ -1,10 +1,37 @@
-// Global fix: guard against `addRange()` on detached ranges from third-party
-// editors (e.g., @assistant-ui/react). These throw when a range's container
-// has been removed from the DOM between renders.
+// Global fix: guard against `addRange()` on detached or cross-document ranges
+// from third-party editors (e.g., @assistant-ui/react). These throw when a
+// range's container has been removed from the DOM between renders.
+//
+// The catch below only swallows the JS-side DOMException — Chromium's console
+// still PRINTS the native "The given range isn't in document." HierarchyRequest
+// line even when the call is caught. So the real fix is PRE-VALIDATION: skip
+// the native call entirely when the range's containers are not connected to
+// this document. The one-shot __ADDRANGE_GUARD__ capture records WHO kept
+// handing us stale ranges, so the residual source can be pinned down if the
+// prints ever persist (dev-only; self-clears on first hit).
 if (typeof Selection !== 'undefined' && Selection.prototype) {
   const _orig = Selection.prototype.addRange
   Selection.prototype.addRange = function (range: Range) {
     try {
+      const start = range?.startContainer as (Node & { ownerDocument?: Document }) | null
+      const end = range?.endContainer as (Node & { ownerDocument?: Document }) | null
+
+      if (!start || !end || !start.isConnected || !end.isConnected || start.ownerDocument !== document || end.ownerDocument !== document) {
+        // Stale / detached / cross-document range: skip the native call so no
+        // HierarchyRequest is raised (and nothing printed). Capture the caller
+        // once, for the record.
+        const w = window as { __ADDRANGE_GUARD__?: { stacks: string[] } }
+        if (!w.__ADDRANGE_GUARD__) {
+          w.__ADDRANGE_GUARD__ = { stacks: [] }
+        }
+
+        if (w.__ADDRANGE_GUARD__.stacks.length < 5) {
+          w.__ADDRANGE_GUARD__.stacks.push(String(new Error('addRange skipped').stack ?? '').slice(0, 2000))
+        }
+
+        return
+      }
+
       _orig.call(this, range)
     } catch {
       // Range is detached from the document; ignore silently.
