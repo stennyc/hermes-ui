@@ -75,6 +75,82 @@ import { isBrowserWindow, isSecondaryWindow } from './windows'
 export const $sessionStates = atom<Record<string, ClientSessionState>>({})
 
 // ---------------------------------------------------------------------------
+// TEMPORARY DIAGNOSTIC (remove once the ~6Hz idle publisher of $sessionStates
+// is identified and fixed): capture the CALLER STACK of every real
+// $sessionStates write (the three .set sites below), so a live page can
+// answer "who is republishing session state ~6x/s at idle?". Grouped by the
+// frame just above the store module — a WebSocket-event frame means gateway
+// fan-in; a React effect/commit frame means a render-side write loop.
+// ---------------------------------------------------------------------------
+
+const PUBLISH_STACK_MAX = 600
+const publishStacks: string[] = []
+let publishStackSampling = true
+
+function capturePublishStack(label: string): void {
+  if (!publishStackSampling || typeof window === 'undefined') {
+    return
+  }
+
+  if (publishStacks.length >= PUBLISH_STACK_MAX) {
+    publishStackSampling = false
+    if (typeof window !== 'undefined' && window.__PUBLISH_STACKS__) {
+      window.__PUBLISH_STACKS__.sampling = false
+    }
+    return
+  }
+
+  const stack = String(new Error(`publish:${label}`).stack ?? '')
+  publishStacks.push(stack.slice(0, 1400))
+}
+
+declare global {
+  interface Window {
+    __PUBLISH_STACKS__?: {
+      sampling: boolean
+      count: () => number
+      clear: () => void
+      stackAt: (i: number) => string
+      /** Distinct caller groups (frames just above this module), most active first. */
+      summary: (limit?: number) => Array<{ frames: string; count: number }>
+    }
+  }
+}
+
+if (typeof window !== 'undefined' && !window.__PUBLISH_STACKS__) {
+  window.__PUBLISH_STACKS__ = {
+    sampling: true,
+    count: () => publishStacks.length,
+    clear: () => {
+      publishStacks.length = 0
+      publishStackSampling = true
+    },
+    stackAt: i => publishStacks[i] ?? '',
+    summary: (limit = 12) => {
+      const groups = new Map<string, number>()
+
+      for (const s of publishStacks) {
+        // lines: [0]=publish:label, [1]=capturePublishStack, [2]=writer fn
+        // (publishSessionState/release/drop, in the app chunk), [3..]=caller.
+        // Key on the 4 caller-adjacent frames so distinct writers separate.
+        const key = s
+          .split('\n')
+          .slice(3, 7)
+          .map(l => l.trim())
+          .join(' | ')
+          .slice(0, 240)
+        groups.set(key, (groups.get(key) ?? 0) + 1)
+      }
+
+      return [...groups.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, limit)
+        .map(([frames, count]) => ({ frames, count }))
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Event-source scopes: which registry connection's socket delivered a runtime
 // session's events. Working/attention membership alone is profile-blind — two
 // connected gateways can both expose a 'default' profile, so the gateway
@@ -578,6 +654,7 @@ export function publishSessionState(runtimeId: string, state: ClientSessionState
     return
   }
 
+  capturePublishStack('publish')
   $sessionStates.set({ ...current, [runtimeId]: state })
   handleTransition(prev, state, runtimeId)
 }
@@ -603,6 +680,7 @@ export function releaseSessionTranscript(runtimeId: string, state?: ClientSessio
   const lightweight =
     Array.isArray(retained.messages) && retained.messages.length === 0 ? retained : { ...retained, messages: [] }
 
+  capturePublishStack('release')
   $sessionStates.set({ ...current, [runtimeId]: lightweight })
 }
 
@@ -624,6 +702,7 @@ export function dropSessionState(runtimeId: string) {
   }
 
   const { [runtimeId]: _dropped, ...rest } = current
+  capturePublishStack('drop')
   $sessionStates.set(rest)
 }
 
@@ -644,6 +723,7 @@ export function clearAllSessionStates() {
   sessionScopeByRuntimeId.clear()
   sessionOwnerByRuntimeId.clear()
   $stalledSessionIds.set([])
+  capturePublishStack('clear')
   $sessionStates.set({})
 }
 
