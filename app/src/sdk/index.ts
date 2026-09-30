@@ -106,7 +106,12 @@ import {
 import { runGatewayRestart } from '@/store/system-actions'
 import type { PaginatedSessions, UsageStats } from '@/types/hermes'
 
+import { pluginDecisions, profiles, skills, toolsets } from './bridge'
 import { planPluginOpenSession } from './plugin-open-session-plan'
+import { sessionsHost } from './sessions'
+import { desktopSettings } from './settings'
+
+export type { DesktopSettingKey, DesktopSettingValues } from './settings'
 
 // -- state: readonly views over the app's live atoms -------------------------
 
@@ -688,6 +693,19 @@ export const host = {
   /** Toast into the app's notification stack. */
   notify,
   notifyError,
+
+  /** Read, update, and observe the allowlisted Desktop appearance preferences. */
+  settings: desktopSettings,
+
+  /** Session-list mutations (pin, reorder, colour) — see `./sessions`. */
+  sessions: sessionsHost,
+
+  /** Typed capabilities bridge — see `./bridge.ts`. `pluginDecisions` is
+   *  read-only: plugin toggling stays in the app's Plugins tab. */
+  skills,
+  toolsets,
+  profiles,
+  pluginDecisions,
 
   // NOTE: every host door is async-safe — wrapped so a sync throw from an
   // internal helper (e.g. no desktop bridge in a plain browser) becomes a

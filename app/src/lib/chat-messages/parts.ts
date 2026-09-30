@@ -116,7 +116,9 @@ export function collectUnspokenTurnSpeech(
   return { id, pending, text: parts.join('\n\n') }
 }
 
-const normalizeWs = (value: string) => value.replace(/\s+/g, ' ').trim()
+// Exported for the leaf layer (`lib/chat-messages/coverage.ts`): shared
+// whitespace-normalization for text-part comparison across hydration paths.
+export const normalizeWs = (value: string) => value.replace(/\s+/g, ' ').trim()
 
 /**
  * Drop earlier text parts that a later text part repeats verbatim (after

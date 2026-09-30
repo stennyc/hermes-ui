@@ -1137,6 +1137,9 @@ export interface DesktopOauthLoginResult {
   ok: boolean
   baseUrl: string
   connected: boolean
+  /** Human-readable reason when `ok` is false (e.g. the OAuth flow was canceled
+   *  or the remote host is unreachable). */
+  error?: string
 }
 
 export interface DesktopOauthLogoutResult {

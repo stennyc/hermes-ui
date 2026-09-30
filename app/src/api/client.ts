@@ -155,6 +155,14 @@ export function capabilityScoped(scope?: ProfileScope): { connectionId?: string;
   return { ...profileScoped(scope), ...connectionScoped() }
 }
 
+/** A (connection, profile) pair that OWNS a resource (a tile, a cached read) —
+ *  used to pin media/file reads and downloads to their source backend. Null
+ *  halves mean "not specified"; an explicit `'local'` overrides the ambient. */
+export interface OwnerScope {
+  connectionId?: null | string
+  profile?: null | string
+}
+
 /** Spawn priority for a REST call that may cold-start a pooled backend. An
  *  explicit scope is a user pointing a scope selector (Settings "Applies to",
  *  Capabilities) at another profile — a visible action that may take the
