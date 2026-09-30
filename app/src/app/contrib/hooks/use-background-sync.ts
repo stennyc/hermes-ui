@@ -328,8 +328,12 @@ const LIVE_SESSION_STATUS_BACKSTOP_INTERVAL_MS = 30_000
 // Coalesce tick-driven sidebar list refreshes: sessions.changed fires (floored
 // to 2s server-side) on every state.db write during a streaming turn, and the
 // full list refresh is heavier than the active_list snapshot. Trailing-edge
-// scheduled, so the burst's last write always lands.
-const SESSIONS_LIST_TICK_GAP_MS = 10_000
+// scheduled, so the burst's last write always lands. 30s bounds the 4-6 REST
+// batch (list + sidebar + cron + transcript) that a long streaming turn would
+// otherwise emit every 10s — background freshness drops from 10s to 30s,
+// which is invisible against the 30s backstop cadence the rest of this file
+// already uses; the active transcript stays busy-gated and unaffected.
+const SESSIONS_LIST_TICK_GAP_MS = 30_000
 // A typing burst keeps the composer's contentEditable input handling on the
 // same renderer main thread as the list refresh above (#95033): with a large
 // session store, one refresh pass can block keystroke echo long enough that

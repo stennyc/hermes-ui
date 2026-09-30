@@ -987,9 +987,9 @@ describe('typing-aware sessions.changed deferral', () => {
   async function primeThrottle(refreshSessions: ReturnType<typeof vi.fn>): Promise<void> {
     act(() => notifySessionsChanged())
     await act(async () => {
-      // One SESSIONS_LIST_TICK_GAP_MS covers both the immediate first tick
+      // One SESSIONS_LIST_TICK_GAP_MS (30s) covers both the immediate first tick
       // and any trailing timer the burst armed.
-      vi.advanceTimersByTime(10_000)
+      vi.advanceTimersByTime(30_000)
       await Promise.resolve()
     })
     refreshSessions.mockClear()
@@ -1033,8 +1033,10 @@ describe('typing-aware sessions.changed deferral', () => {
 
     // ...and nothing extra afterwards without further broadcasts — mid-burst
     // ticks must not have stacked trailing timers behind the promised pass.
+    // The buffer spans a full SESSIONS_LIST_TICK_GAP_MS (30s) so any stacked
+    // trailing timer would have had its window to fire and add a 2nd call.
     await act(async () => {
-      vi.advanceTimersByTime(10_000)
+      vi.advanceTimersByTime(30_000)
       await Promise.resolve()
     })
 
@@ -1049,9 +1051,9 @@ describe('typing-aware sessions.changed deferral', () => {
     renderTypingSync(refreshSessions)
     await primeThrottle(refreshSessions)
 
-    // Keys every 200ms for ~22s — longer than SESSIONS_LIST_TICK_GAP_MS.
+    // Keys every 200ms for ~35s — longer than SESSIONS_LIST_TICK_GAP_MS (30s).
     // Broadcasts keep flowing; the heavy pass must not land under them.
-    for (let index = 0; index < 110; index += 1) {
+    for (let index = 0; index < 175; index += 1) {
       typeKey()
 
       if (index % 10 === 0) {
@@ -1073,8 +1075,9 @@ describe('typing-aware sessions.changed deferral', () => {
 
     expect(refreshSessions).toHaveBeenCalledTimes(1)
 
+    // A full gap window later, still exactly one pass.
     await act(async () => {
-      vi.advanceTimersByTime(10_000)
+      vi.advanceTimersByTime(30_000)
       await Promise.resolve()
     })
 
@@ -1091,8 +1094,11 @@ describe('typing-aware sessions.changed deferral', () => {
 
     act(() => notifySessionsChanged())
 
+    // Idle, and the full 30s gap has elapsed since the primed pass, so the
+    // refresh runs immediately (>= gap) with no deferral and no trailing timer
+    // to stack behind it. The buffer run confirms nothing extra lands.
     await act(async () => {
-      vi.advanceTimersByTime(11_000)
+      vi.advanceTimersByTime(31_000)
       await Promise.resolve()
     })
 
