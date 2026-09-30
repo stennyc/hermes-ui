@@ -67,3 +67,37 @@ The general watermark above is unchanged - only the files below track `v2026.8.1
 **Seams cut into existing files:** composer submit middleware (`runComposerMiddleware` in `app/chat/composer/index.tsx`), contributed `@` completion sources (`hooks/use-at-completions.ts`), contributed palette rows (`app/command-palette/index.tsx`), plugin boot + right panes (`app/desktop-controller.tsx`), sidebar tab strip (`app/chat/sidebar/index.tsx`), `pluginRest` (`hermes.ts`), plugin i18n re-exports (`i18n/index.ts`).
 
 **Still deferred (on top of the PR2 list):** the tree layout engine, `Settings > Plugins` page (plugins can only be toggled via the persisted `hermes.desktop.pluginDecisions.v2` storage key for now), `contrib/runtime-loader.ts`, `store/composer-actions` + composer micro-actions, `blobatarSvg` avatars (not present upstream at this tag either - the plugin's classic-shapes fallback renders).
+
+### 2026-10-01 - B0 prep for v2026.9.24 sync (task t_6d74d139)
+
+Backup tag `backup/pre-sync-2026.9.24` created at `40a151e` (rollback point for the 9.24
+incremental sync; named to avoid collision with the 0924-era tags `backup/pre-sync-20260924`
+and `backup/pre-resync-20260924`).
+
+Hub methodology loaded before B1 (sources: `hermes-ui-debug` hub + spec §7). Key points
+for B1-B7 executors:
+
+1. **getSnapshot audit** (hub `references/get-snapshot-audit-map.md`): any new store/selector
+   whose `useSyncExternalStore` getSnapshot returns a fresh (uncached) reference causes
+   `Maximum update depth exceeded` death loops (amplified by long sessions / streaming).
+   Hot spots: the `useSessionSlice` / `useStoreSelector` / `useStoresSelector` series in
+   `lib/use-session-slice.ts` and the incremental adapter runtime second loop path. Before
+   touching any of these, check the audit map first; when adding multi-line selectors,
+   verify the RETURN type is a primitive or a reference-stable (module-level cached) value.
+2. **DCE side-effect trap** (hub `references/dce-sideeffects-trap.md`): `nanostores` ships
+   `"sideEffects": false`, so vite/rolldown build will delete "apparently unused" side-effect
+   store registrations (e.g. a bare `batch(fn)` statement with discarded return value) -
+   dev works, prod silently empty, zero console errors. Any new store must have an import
+   path referenced in the module tree (or a return value feeding a global sink like
+   `globalThis.<MARKER> = ...`); it cannot rely on runtime-only registration.
+3. **i18n types first** (spec §B1): in B1, define the `i18n/types.ts` schema before writing
+   language files (`fr.ts` / `es.ts` / `de.ts`, `intro-*.tsx`); all language files copy the
+   structure from the types. Skipping this order makes every language file fail schema
+   checks. No key-parity test exists, so dropping keys is safe.
+4. **served-bytes staleness verification** (hub "Served bundle is stale" triage + spec §B7;
+   used at B7, recorded here up front): a bare check of `/` (or `/login`) can return 302
+   redirects or a stale PWA/`HERMES_WEB_DIST` cache - do NOT trust it. After build+deploy,
+   curl the NEW concrete chunk directly (`/assets/index-<newHash>.js`) and compare the
+   served byte count against the local `dist` build; use minify-surviving markers / string
+   literals (not symbol names) when grepping chunks; i18n copy lives in
+   `assets/i18n-<hash>.js`, not the main chunk.
