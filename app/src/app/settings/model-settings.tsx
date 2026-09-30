@@ -1136,8 +1136,10 @@ export function ModelSettings({ onMainModelChanged, scopeProfile }: ModelSetting
                           {' · '}
                           {current.reasoning_effort === 'none'
                             ? `${m.reasoning} ${m.reasoningOff}`
-                            : (t.shell.modelOptions[current.reasoning_effort as keyof typeof t.shell.modelOptions] ??
-                              current.reasoning_effort)}
+                            : String(
+                                t.shell.modelOptions[current.reasoning_effort as keyof typeof t.shell.modelOptions] ??
+                                  current.reasoning_effort,
+                              )}
                         </span>
                       )}
                     </span>
