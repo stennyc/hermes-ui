@@ -3,9 +3,8 @@ import {
   BranchPickerPrimitive,
   ErrorPrimitive,
   MessagePrimitive,
-  useAuiState,
-  useMessageRuntime,
-  useThreadRuntime
+  useAui,
+  useAuiState
 } from '@assistant-ui/react'
 import { useStore } from '@nanostores/react'
 import { type FC, type ReactNode, useCallback, useContext, useMemo, useState } from 'react'
@@ -187,8 +186,7 @@ const AssistantMessageBody: FC<AssistantMessageProps & { collapsedNotice?: null 
   onDismissError
 }) => {
   const messageId = useAuiState(s => s.message.id)
-  const messageRuntime = useMessageRuntime()
-  const threadRuntime = useThreadRuntime()
+  const aui = useAui()
   const responseIds = useContext(ResponseMessageIds)
   const responseTail = responseIds.length === 0 || responseIds.at(-1) === messageId
   const { t } = useI18n()
@@ -225,11 +223,11 @@ const AssistantMessageBody: FC<AssistantMessageProps & { collapsedNotice?: null 
     () =>
       responseIds.length
         ? responseIds
-            .map(id => messageContentText(threadRuntime.getMessageById(id).getState().content))
+            .map(id => messageContentText(aui.thread.message({ id }).getState().content))
             .filter(Boolean)
             .join('\n\n')
-        : messageContentText(messageRuntime.getState().content),
-    [messageRuntime, responseIds, threadRuntime]
+        : messageContentText(aui.message.getState().content),
+    [aui, responseIds]
   )
 
   // useEnterAnimation consults `enabled` ONLY when its callback ref fires,
@@ -240,7 +238,7 @@ const AssistantMessageBody: FC<AssistantMessageProps & { collapsedNotice?: null 
   // subscription here would re-render this root on every pending flip to feed
   // a value the hook already ignores. Capture it once, off the runtime, with
   // no subscription at all.
-  const [initiallyRunning] = useState(() => messageRuntime.getState().status?.type === 'running')
+  const [initiallyRunning] = useState(() => aui.message.getState().status?.type === 'running')
   const enterRef = useEnterAnimation(initiallyRunning, `assistant-message:${messageId}`)
 
   // Double-click the reply to heart it (iMessage). Undefined while reactions
@@ -561,7 +559,7 @@ const updateApiKeyRoute = (surface: ErrorSurface | undefined) => {
 // (user-message.tsx ActionBarPrimitive.Edit). Retry would reproduce the
 // refusal; changing the words is the only way forward.
 const EditPreviousMessageAction: FC<{ label: string }> = ({ label }) => {
-  const threadRuntime = useThreadRuntime()
+  const aui = useAui()
 
   const previousUserMessageId = useAuiState(s => {
     const messages = s.thread.messages
@@ -583,8 +581,8 @@ const EditPreviousMessageAction: FC<{ label: string }> = ({ label }) => {
 
     triggerHaptic('selection')
     notifyThreadEditOpen()
-    threadRuntime.getMessageById(previousUserMessageId).composer.beginEdit()
-  }, [previousUserMessageId, threadRuntime])
+    aui.thread.message({ id: previousUserMessageId }).composer().beginEdit()
+  }, [previousUserMessageId, aui])
 
   if (!previousUserMessageId) {
     return null

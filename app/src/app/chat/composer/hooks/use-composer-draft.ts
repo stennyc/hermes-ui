@@ -6,7 +6,7 @@ import '@/store/suggestion-providers/github'
 import '@/store/suggestion-providers/mcp'
 import '@/store/suggestion-providers/skill'
 
-import { useAui, useAuiState, useComposerRuntime } from '@assistant-ui/react'
+import { useAui, useAuiState } from '@assistant-ui/react'
 import { SLASH_COMMAND_RE } from '@hermes/shared'
 import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
@@ -79,7 +79,6 @@ export function useComposerDraft({
   sessionId
 }: UseComposerDraftArgs) {
   const aui = useAui()
-  const composerRuntime = useComposerRuntime()
   const paneVisible = useComposerVisible()
   const visibleRef = useRef(paneVisible)
   visibleRef.current = paneVisible
@@ -104,7 +103,7 @@ export function useComposerDraft({
   const setComposerText = useCallback(
     (value: string) => {
       try {
-        aui.composer().setText(value)
+        aui.composer.setText(value)
       } catch {
         // Composer core not bound yet — DOM/draftRef carry the text.
       }
@@ -344,7 +343,7 @@ export function useComposerDraft({
   // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
     const sync = () => {
-      const text = composerRuntime.getState().text
+      const text = aui.composer.getState().text
       draftRef.current = text
       // Composer suggestion pills for THIS session's draft (debounced +
       // change-gated in the bus — this is just a timer reset).
@@ -379,13 +378,13 @@ export function useComposerDraft({
       }, DRAFT_PERSIST_DEBOUNCE_MS)
     }
 
-    const unsubscribe = composerRuntime.subscribe(sync)
+    const unsubscribe = aui.subscribe(sync)
 
     return () => {
       unsubscribe()
       window.clearTimeout(draftPersistTimerRef.current)
     }
-  }, [composerRuntime, queueEditRef])
+  }, [aui, queueEditRef])
 
   const insertText = (text: string) => {
     const base = draftRef.current

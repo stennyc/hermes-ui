@@ -1,4 +1,4 @@
-import { useAuiState, useMessageRuntime } from '@assistant-ui/react'
+import { useAui, useAuiState } from '@assistant-ui/react'
 import { useStore } from '@nanostores/react'
 import { type MouseEvent, useCallback } from 'react'
 
@@ -106,7 +106,7 @@ export function useTapbackDoubleClick(
   role: ChatMessage['role']
 ): ((event: MouseEvent<HTMLElement>) => void) | undefined {
   const enabled = useStore($reactionsEnabled)
-  const messageRuntime = useMessageRuntime()
+  const aui = useAui()
 
   const onDoubleClick = useCallback(
     (event: MouseEvent<HTMLElement>) => {
@@ -119,7 +119,7 @@ export function useTapbackDoubleClick(
       window.getSelection()?.removeAllRanges()
       triggerHaptic('selection')
 
-      const custom = (messageRuntime.getState().metadata?.custom ?? {}) as {
+      const custom = (aui.message.getState().metadata?.custom ?? {}) as {
         reactions?: MessageReaction[]
         rowId?: number
       }
@@ -139,7 +139,7 @@ export function useTapbackDoubleClick(
         mine?.emoji === DOUBLE_CLICK_REACTION ? null : DOUBLE_CLICK_REACTION
       )
     },
-    [messageId, messageRuntime, role]
+    [messageId, aui, role]
   )
 
   return enabled ? onDoubleClick : undefined
