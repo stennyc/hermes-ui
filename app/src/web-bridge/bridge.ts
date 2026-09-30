@@ -288,7 +288,10 @@ async function apiFetch<T>(request: HermesApiRequest): Promise<T> {
   const { body, method = 'GET', path, profile, timeoutMs } = request
   let url = baseUrl() + path
 
-  if (profile) {
+  // Callers like sessions.ts / cron.ts bake `&profile=` into the path already;
+  // only append when the URL carries no profile param, so the request ends up
+  // with exactly one (repeated same-value params look like a bug in logs).
+  if (profile && !/[?&]profile=/.test(url)) {
     url += `${url.includes('?') ? '&' : '?'}profile=${encodeURIComponent(profile)}`
   }
 
