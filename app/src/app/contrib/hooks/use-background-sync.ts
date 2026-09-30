@@ -334,6 +334,10 @@ const LIVE_SESSION_STATUS_BACKSTOP_INTERVAL_MS = 30_000
 // which is invisible against the 30s backstop cadence the rest of this file
 // already uses; the active transcript stays busy-gated and unaffected.
 const SESSIONS_LIST_TICK_GAP_MS = 30_000
+// Cadence alignment: deliberately equal to the 30s backstop group above
+// (CRON_POLL / ACTIVE_MESSAGING / LIVE_SESSION_STATUS_BACKSTOP). If one of
+// those moves, move this too, or the "invisible against the backstop
+// cadence" rationale in the comment above silently stops holding.
 // A typing burst keeps the composer's contentEditable input handling on the
 // same renderer main thread as the list refresh above (#95033): with a large
 // session store, one refresh pass can block keystroke echo long enough that

@@ -260,9 +260,13 @@ class IncrementalExternalStoreThreadRuntimeCore extends ExternalStoreThreadRunti
     const placeholderAlive = last?.id === prevPlaceholderId
     const tail = placeholderAlive ? messages.at(-2) : last
     const wantsPlaceholder = isRunning && tail?.role !== 'assistant'
+    // `?.parentId`: the live snapshot and the repository's live messages can
+    // diverge for one tick right after a disjoint rebuild evicted the
+    // placeholder; the optional chain degrades to null (placeholder treated
+    // as unparented → re-minted on the next branch) instead of throwing.
     const placeholderParent =
       placeholderAlive && prevPlaceholderId
-        ? (this.repository.getMessage(prevPlaceholderId).parentId ?? null)
+        ? (this.repository.getMessage(prevPlaceholderId)?.parentId ?? null)
         : null
     if (prevPlaceholderId && placeholderAlive && !wantsPlaceholder) {
       // Turn ended or a settled assistant reply landed: drop the spinner.
@@ -321,6 +325,12 @@ class IncrementalExternalStoreThreadRuntimeCore extends ExternalStoreThreadRunti
     // disjoint rebuild, placeholder mint/evict) dirties the cache and the
     // ref moves — notifying exactly then.
     const contentChanged = self._messages !== prevMessages
+    // INVARIANT the ref-compare gate relies on: nothing between
+    // `prevMessages` (captured above) and `getMessages()` below may write to
+    // the repository when _messages is already non-empty. Today
+    // ensureInitialized() is that no-op on the no-op path; if it ever starts
+    // normalizing/dirtying, contentChanged goes true every round and the
+    // loop re-opens — keep it read-only or move the write behind the gate.
     // `changed` (disabled/extras/suggestions/capabilities) is computed up top
     // and reused here: a flip of any of those is an observable change that
     // must reach subscribers even on a no-op repository sync.
