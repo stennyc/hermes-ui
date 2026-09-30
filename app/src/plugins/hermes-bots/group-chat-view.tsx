@@ -69,6 +69,7 @@ import {
   updateGroupChat
 } from './group-chat'
 import type { GroupChatRoom } from './group-chat'
+import { backfillGroupRoomHistory } from './group-history'
 import { GroupClarifyCard, GroupImageControls, GroupMentionInput } from './group-chat-parts'
 import type { GroupRoomPrompt } from './group-chat-parts'
 import { GroupMemberPicker } from './group-chat-view-members'
@@ -599,6 +600,26 @@ export function GroupChatWorkspace({ group, members, onBack, visible = true }: G
 
     wasVisibleRef.current = visible
   }, [visible])
+
+  // Cold-start backfill (P0): a room that renders EMPTY even though its members
+  // have a full server-side transcript (fresh browser / cleared localStorage,
+  // or a room written on another client before the sync projection landed) is
+  // reassembled from each member's own state.db. Fire on the open edge — mount
+  // and the hidden → visible reopen — only while the log is still empty. The
+  // module is idempotent and in-flight-guarded, so a concurrent surface riding
+  // the same room rides the same backfill instead of re-issuing every member's
+  // RPC; once the log is populated the empty check short-circuits the rest.
+  const membersRef = useRef(members)
+
+  membersRef.current = members
+  useEffect(() => {
+    if (room.log.length > 0) {
+      return
+    }
+
+    void backfillGroupRoomHistory(group, membersRef.current).catch(() => 0)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group, visible])
   const imagesFor = (thread: null | string) => pendingImages[thread ?? 'main'] || []
 
   const addImages = (thread: null | string, picked: Attachment[]) => {

@@ -1177,6 +1177,39 @@ export function scheduleGroupChatServerSync(
   }, 350)
 }
 
+/** Pull the shared room projection, retrying a FAILED pull on a backoff
+ *  ladder (P0b).
+ *
+ *  A pull that THROWS is the gateway still warming after a restart (route not
+ *  ready, backend cold) — that is the failure the open-transition must ride
+ *  out instead of giving up after one attempt. A pull that COMPLETES — even
+ *  one returning `false` ("no remote snapshot yet", a server that simply has
+ *  no group projection) — is NOT retried: retrying a legitimate empty would
+ *  spin forever. Bounded so a genuinely dead gateway can't retry the
+ *  open-transition pull forever. */
+export async function pullGroupChatServerStateWithRetry(
+  pull: () => Promise<null | boolean>,
+  delayMs: (attempt: number) => number,
+  maxAttempts = 5
+): Promise<null | boolean> {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise(resolve => setTimeout(resolve, delayMs(attempt)))
+    }
+
+    try {
+      return await pull()
+    } catch {
+      // Transient (gateway warming / route not ready): fall through and retry.
+      if (attempt === maxAttempts - 1) {
+        return null
+      }
+    }
+  }
+
+  return null
+}
+
 export function handleSessionsGatewayTransition() {
   // A gateway swap invalidates any in-flight room drive: bump every room's
   // epoch so running loops bail at their next member boundary.
@@ -1195,9 +1228,15 @@ export function handleSessionsGatewayTransition() {
   $groupChats.set(rooms)
   // Pull before re-publishing so a reconnect or source swap never lets this
   // client's stale cache hide a room written by another Desktop/mobile client.
-  void pullGroupChatServerState()
-    .catch(() => false)
-    .then(() => scheduleGroupChatServerSync($groupChats.get()))
+  // The gateway may still be warming after a restart, so a single failed pull
+  // would leave the rooms empty until the NEXT transition — ride it out with a
+  // bounded retry ladder (P0b) instead of giving up after one attempt.
+  void pullGroupChatServerStateWithRetry(
+    () => pullGroupChatServerState(),
+    attempt => 500 * 2 ** Math.min(attempt - 1, 5)
+  ).then(() => {
+    scheduleGroupChatServerSync($groupChats.get())
+  })
 }
 
 /** Re-arm the mirror after a dispose. `register()` owns this door: an

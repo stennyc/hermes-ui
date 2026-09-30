@@ -26,11 +26,17 @@ import { vi } from 'vitest'
 /** One message in a scripted session transcript, in the gateway's own shape. */
 export interface ScriptedMessage {
   content: string
+  /** Display-only wire timestamp, SECONDS — `TranscriptMessage.timestamp`. */
+  timestamp?: number
   role: string
 }
 
 export interface ScriptedSession {
   contracts?: { follow_profile_config: boolean; room_plumbing: boolean }
+  /** Hidden session, listed by `session.list` only when `include_hidden` is set. */
+  hidden?: boolean
+  /** Stored-session `started_at`, SECONDS. */
+  startedAt?: number
   messages: ScriptedMessage[]
   profile: string
   runtime: string
@@ -79,7 +85,21 @@ export interface RpcCall {
   refcountAfter: number
 }
 
-export interface GatewayOptions {
+/** A stored session a test pre-registers, so the group engine can `session.list`
+ *  it (hidden, per-profile) and `session.resume` it (lazy) without ever running a turn. */
+export interface SeededSession {
+  profile: string
+  startedAt?: number
+  title: string
+  messages: Array<{ content?: string; role: string; timestamp?: number }>
+}
+
+export type GatewayOptions = {
+  /** Pre-seeded stored sessions, listed by `session.list` and resumable by `session.resume`. */
+  seedSessions?: SeededSession[]
+  /** Per profile: report the session as `running` on its first N `session.resume`s —
+   *  a live turn in progress, which a cold backfill must not read. */
+  runningResumes?: Record<string, number>
   /** Per profile: report inflight/running on its first N `session.resume`s. */
   busyResumes?: Record<string, number>
   /** Per profile: carry `pending_approval` on its first `until` resumes. */
@@ -170,6 +190,32 @@ export function createGroupGateway(options: GatewayOptions = {}): ScriptedGatewa
     return stored ? sessions.get(stored) || null : null
   }
 
+  // Pre-seeded stored sessions: registered so `session.list` (hidden, per
+  // profile) can return them and `session.resume` (lazy) can read their
+  // transcripts back — the group-room backfill path, without running a turn.
+  for (const seed of options.seedSessions || []) {
+    sequence += 1
+    const stored = `seed-${seed.profile}-${sequence}`
+
+    const seeded: ScriptedSession = {
+      hidden: true,
+      messages: seed.messages.map(message => ({
+        content: String(message.content ?? ''),
+        ...(message.timestamp !== undefined ? { timestamp: message.timestamp } : {}),
+        role: message.role
+      })),
+      profile: seed.profile,
+      runtime: `rt-${seed.profile}-${sequence}`,
+      startedAt: seed.startedAt,
+      stored,
+      title: seed.title
+    }
+
+    sessions.set(stored, seeded)
+    runtimeToStored.set(seeded.runtime, stored)
+    titleToStored.set(`${seed.profile}::${seed.title}`, stored)
+  }
+
   const handle = async (method: string, params: Record<string, unknown>): Promise<unknown> => {
     if (method === 'profiles.list') {
       return {
@@ -222,6 +268,34 @@ export function createGroupGateway(options: GatewayOptions = {}): ScriptedGatewa
       return { applied: { ui_meta: true, ui_meta_revisions: { ...uiMetaRevisions } } }
     }
 
+    if (method === 'session.list') {
+      // The group-room backfill path: `session.list` scoped to a member
+      // profile, hidden sessions included, optional exact-title match. Mirrors
+      // `SessionListResult`/`SessionListRow` — `id` is the STORED id that
+      // `session.resume` later resolves.
+      const profile = String(params.profile ?? '')
+      const exactTitle = params.title != null ? String(params.title) : null
+      const includeHidden = params.include_hidden === true
+
+      const rows = [...sessions.values()]
+        .filter(session => session.profile === profile)
+        .filter(session => includeHidden || !session.hidden)
+        .filter(session => (exactTitle ? session.title === exactTitle : true))
+        .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))
+        .slice(0, typeof params.limit === 'number' ? params.limit : undefined)
+
+      return {
+        sessions: rows.map(session => ({
+          id: session.stored,
+          message_count: session.messages.length,
+          preview: String(session.messages.at(-1)?.content ?? '').slice(0, 120),
+          source: 'tui',
+          started_at: session.startedAt ?? 0,
+          title: session.title
+        }))
+      }
+    }
+
     if (method === 'session.create') {
       sequence += 1
       const profile = String(params.profile ?? '')
@@ -264,6 +338,10 @@ export function createGroupGateway(options: GatewayOptions = {}): ScriptedGatewa
       resumesByProfile.set(session.profile, seen)
       let busy = Boolean(options.busyResumes?.[session.profile] && seen <= options.busyResumes[session.profile])
 
+      // A live turn in progress on this profile: the session reports `running`
+      // for its first N resumes, and a cold history reader must skip it.
+      const running = Boolean(options.runningResumes?.[session.profile] && seen <= options.runningResumes[session.profile])
+
       if (session.messages.length > 0) {
         polls += 1
         busy = busy || Boolean(options.pollsBusy && polls <= options.pollsBusy)
@@ -280,9 +358,9 @@ export function createGroupGateway(options: GatewayOptions = {}): ScriptedGatewa
 
       return {
         inflight: retained ?? busy,
-        message_count: busy ? 0 : session.messages.length,
-        messages: busy || params.omit_messages ? [] : [...session.messages],
-        running: false,
+        message_count: busy || running ? 0 : session.messages.length,
+        messages: busy || running || params.omit_messages ? [] : [...session.messages],
+        running: running ? true : false,
         session_id: session.runtime,
         session_key: session.stored,
         ...(clarify && seen <= clarify.until ? { open_requests: [clarify.payload] } : {}),
