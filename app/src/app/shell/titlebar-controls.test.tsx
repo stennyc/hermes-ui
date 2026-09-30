@@ -181,7 +181,7 @@ describe('titlebar app-action cluster', () => {
     cleanup()
   })
 
-  it('defaults settings, layout, and HUD to the right so the left titlebar stays free for tabs', () => {
+  it('defaults settings and layout to the right so the left titlebar stays free for tabs', () => {
     renderControls('/')
 
     const left = screen.getByLabelText('Window controls')
@@ -189,15 +189,13 @@ describe('titlebar app-action cluster', () => {
 
     expect(within(right).getByLabelText('Open settings')).toBeTruthy()
     expect(within(right).getByLabelText('Layout editor')).toBeTruthy()
-    expect(within(right).getByLabelText('HUD mode')).toBeTruthy()
 
     expect(within(left).queryByLabelText('Open settings')).toBeNull()
     expect(within(left).queryByLabelText('Layout editor')).toBeNull()
-    expect(within(left).queryByLabelText('HUD mode')).toBeNull()
     expect(within(left).getByLabelText(/Hide sidebar|Show sidebar/)).toBeTruthy()
   })
 
-  it('moves settings, layout, and HUD to the left when the appearance setting says left', () => {
+  it('moves settings and layout to the left when the appearance setting says left', () => {
     setTitlebarAppActionsSide('left')
     renderControls('/')
 
@@ -206,7 +204,6 @@ describe('titlebar app-action cluster', () => {
 
     expect(within(left).getByLabelText('Open settings')).toBeTruthy()
     expect(within(left).getByLabelText('Layout editor')).toBeTruthy()
-    expect(within(left).getByLabelText('HUD mode')).toBeTruthy()
     expect(within(right).queryByLabelText('Open settings')).toBeNull()
   })
 })

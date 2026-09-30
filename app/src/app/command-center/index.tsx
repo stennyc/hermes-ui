@@ -45,7 +45,7 @@ export type CommandCenterSection = 'maintenance' | 'sessions' | 'system' | 'usag
 
 const SECTIONS = ['sessions', 'system', 'usage', 'maintenance'] as const satisfies readonly CommandCenterSection[]
 
-const LOG_FILES = ['agent', 'errors', 'gateway', 'desktop'] as const
+const LOG_FILES = ['agent', 'errors', 'gateway'] as const
 const LOG_LEVELS = ['ALL', 'INFO', 'WARNING', 'ERROR'] as const
 
 const USAGE_PERIODS = [7, 30, 90] as const

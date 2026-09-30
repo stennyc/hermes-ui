@@ -377,8 +377,6 @@ export const ru = defineLocale({
       'view.toggleProfileRail': 'Показать / скрыть панель профилей',
       'view.showFiles': 'Показать браузер файлов',
       'view.showBrowser': 'Открыть браузер',
-      'view.toggleHud': 'Включить / выключить режим HUD',
-      'hud.snapToPointer': 'Переместить HUD под курсор (глобально, пока HUD открыт)',
       'view.showTerminal': 'Показать / скрыть терминал',
       'view.newTerminal': 'Новый терминал',
       'view.nextTerminal': 'Следующий терминал',
