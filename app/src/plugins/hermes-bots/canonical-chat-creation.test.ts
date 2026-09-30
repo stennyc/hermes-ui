@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Minting a bot's forever-chat.
  *

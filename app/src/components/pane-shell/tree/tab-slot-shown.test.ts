@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // ⌘1…⌘9 / ⌃Tab must index the same tabs the strip paints. A chrome-hidden

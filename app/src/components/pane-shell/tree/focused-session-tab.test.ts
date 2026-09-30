@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // ⌘W / ⌘T / ⌘⇧T / the strip "+" used to hardcode the workspace's zone while

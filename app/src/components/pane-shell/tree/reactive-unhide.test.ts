@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Ground-truth repro for "reactive unhides silently re-open a user-collapsed

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Enforced dock invariants: a pane whose dock hint carries `enforce: true`

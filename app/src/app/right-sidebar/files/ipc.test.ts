@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /// <reference types="node" />
 
 import { Buffer } from 'node:buffer'

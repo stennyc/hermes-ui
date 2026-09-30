@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Per-bot Hide/Unhide.
  *

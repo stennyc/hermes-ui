@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const LEGACY_VISIBLE_KEY = 'hermes.desktop.statusbarVisible'

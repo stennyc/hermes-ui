@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // Bug #2: the Branch-in-new-chat button used to render unconditionally even
 // when its handler was a no-op (session-tile.tsx passed `() => undefined`
 // for branched/tiled chats, where nested branching isn't supported). That

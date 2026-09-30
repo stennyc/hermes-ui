@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * The two composer contributions Bot Mode registers, driven through the real
  * `plugin.register()`: @-mention completions and the mention middleware.

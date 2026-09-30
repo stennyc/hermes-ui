@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { GatewayEvent } from '@hermes/shared'
 import { QueryClient } from '@tanstack/react-query'
 import { act, cleanup } from '@testing-library/react'

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { GatewayEvent } from '@hermes/shared'
 // Repro for "when I steer it often sends out of order — a user bubble way
 // above" (#73793 / #83151 class). Drives the REAL stream reducer

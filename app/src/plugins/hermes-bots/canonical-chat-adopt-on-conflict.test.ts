@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * ADOPT-BEFORE-MINT (#92473 part 2).
  *

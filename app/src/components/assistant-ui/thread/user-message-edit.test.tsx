@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { type AppendMessage, ExportedMessageRepository } from '@assistant-ui/react'
 // Clicking a user bubble must open the inline edit composer — through the
 // app's incremental external-store runtime (which reimplements capability

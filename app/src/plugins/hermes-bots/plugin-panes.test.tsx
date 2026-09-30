@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Bot Mode's pane layout contract, asserted by running the real `register()`
  * against a recording plugin context:

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { GatewayEventName } from '@hermes/shared'
 // Tool events route to the bubble that owns the call id, not to whatever is
 // streaming now. A result that lands AFTER its part was sealed (interim

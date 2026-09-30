@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * The shared face clock: ONE animation loop for every mounted math face.
  *

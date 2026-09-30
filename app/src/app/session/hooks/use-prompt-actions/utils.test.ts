@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { AppendMessage } from '@assistant-ui/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 

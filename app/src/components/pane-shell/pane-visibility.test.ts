@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { hiddenPaneProps, PANE_HIDDEN_ATTR, queryAllVisible, queryVisible } from './pane-visibility'

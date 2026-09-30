@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * The bot row's two side effects: pre-warming and opening.
  *

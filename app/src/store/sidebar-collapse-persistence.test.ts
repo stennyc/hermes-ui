@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Ground-truth repro for "hiding the sidebar doesn't persist on reload": drive

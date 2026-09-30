@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // `IS_MAC` is resolved once at module load from `navigator`, so each platform

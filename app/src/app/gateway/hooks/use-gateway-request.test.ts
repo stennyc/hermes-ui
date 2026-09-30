@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { GatewayWsUrlResult } from '@hermes/shared'
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'

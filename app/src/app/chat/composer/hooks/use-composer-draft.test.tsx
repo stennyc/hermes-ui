@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { useLayoutEffect } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -17,12 +18,11 @@ import { useComposerDraft } from './use-composer-draft'
 const mockComposerApi = { setText: vi.fn() }
 
 vi.mock('@assistant-ui/react', () => ({
-  useAui: () => ({ composer: () => mockComposerApi }),
-  useAuiState: (selector: (state: { composer: { text: string } }) => unknown) => selector({ composer: { text: '' } }),
-  useComposerRuntime: () => ({
-    getState: () => ({ text: '' }),
+  useAui: () => ({
+    composer: { getState: () => ({ text: '' }), setText: mockComposerApi.setText },
     subscribe: () => () => undefined
-  })
+  }),
+  useAuiState: (selector: (state: { composer: { text: string } }) => unknown) => selector({ composer: { text: '' } })
 }))
 
 interface ProbeHarnessProps {

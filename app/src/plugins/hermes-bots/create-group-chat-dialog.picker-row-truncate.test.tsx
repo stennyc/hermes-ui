@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * The New Group Chat picker rows are `label` flex containers wrapping a
  * `min-w-0 flex-1` text column whose lines are `truncate`. A flex/grid item

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { Unstable_TriggerAdapter, Unstable_TriggerItem } from '@assistant-ui/core'
 import { act, fireEvent, render } from '@testing-library/react'
 import { useCallback, useEffect, useRef, useState } from 'react'

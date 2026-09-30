@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * `useStoresSelector` — the multi-store form of `useStoreSelector`.
  *

@@ -1,4 +1,5 @@
-import { useAssistantRuntime } from '@assistant-ui/react'
+// @vitest-environment jsdom
+import { useAui } from '@assistant-ui/react'
 import { act, render } from '@testing-library/react'
 import { atom } from 'nanostores'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -40,11 +41,11 @@ function mount() {
   }
 
   let window!: Required<TranscriptWindowValue>
-  let runtime!: NonNullable<ReturnType<typeof useAssistantRuntime>>
+  let runtime!: ReturnType<typeof useAui>
 
   function Observe() {
     window = useTranscriptWindow()
-    runtime = useAssistantRuntime()!
+    runtime = useAui()
 
     return null
   }

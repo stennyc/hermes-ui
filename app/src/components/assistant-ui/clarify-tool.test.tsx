@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { ToolCallMessagePartProps } from '@assistant-ui/react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { atom } from 'nanostores'

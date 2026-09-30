@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * A cron mutation names the owner that rendered it, never the ambient profile.
  *

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Which cron jobs the pane shows, and why it can look empty.
  *

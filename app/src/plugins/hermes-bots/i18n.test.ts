@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * The English bundle is the message shape. ja / zh / zh-hant must cover the
  * same leaves so a locale switch never falls through to a raw key — and the

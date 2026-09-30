@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * New Bot creates its profile LAZILY. Two contracts hang off that:
  *

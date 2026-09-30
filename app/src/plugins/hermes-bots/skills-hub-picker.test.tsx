@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * The Skills Hub picker embeds the real hub page in an iframe; the page posts
  * `{type:'hermes-skill-pick'}` back and the plugin installs via skills.manage.

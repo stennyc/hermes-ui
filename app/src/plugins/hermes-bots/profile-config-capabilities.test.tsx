@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * The bot editor's Advanced section renders the REAL core Capabilities
  * surfaces — SkillsView (installed skills + hub installs + detail),

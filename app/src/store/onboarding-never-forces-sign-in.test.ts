@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * The free tier is unmetered and the guided first launch never demands an
  * account. This is the acceptance criterion the guided onboarding was built

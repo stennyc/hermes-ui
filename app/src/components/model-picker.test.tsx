@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { ModelOptionsResult } from '@hermes/shared'
 import { fuzzyRank, modelSearchText } from '@hermes/shared'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'

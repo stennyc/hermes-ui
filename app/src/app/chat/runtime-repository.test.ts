@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { MessageRepository } from '@assistant-ui/core/internal'
 import { renderHook } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'

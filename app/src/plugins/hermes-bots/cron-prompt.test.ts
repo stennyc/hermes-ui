@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * What a routine actually runs.
  *

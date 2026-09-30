@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { useStore } from '@nanostores/react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, useLocation, useNavigate } from 'react-router'

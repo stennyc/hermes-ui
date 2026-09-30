@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // Lists and blockquotes have chrome beside the text (markers, the quote
 // border) whose side is driven by the box's CSS direction, which the
 // unicode-bidi:plaintext rules never touch. These tests pin the split of

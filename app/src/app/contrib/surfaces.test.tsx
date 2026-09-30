@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { atom } from 'nanostores'
 import { MemoryRouter } from 'react-router'

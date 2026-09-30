@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * The multi-source roster merge, driven through the real `useRoster` query.
  *

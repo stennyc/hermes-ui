@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { ThreadMessage } from '@assistant-ui/react'
 import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'

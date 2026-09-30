@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * #94471: React Query stores whatever the queryFn throws, and React 19 then
  * formats it with `(error.name || '').trim()`. IPC / JSON-RPC rejections are

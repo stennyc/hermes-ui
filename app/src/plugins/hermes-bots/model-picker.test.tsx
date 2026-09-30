@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * #95279: the Bot Mode model picker's catalog read must always SETTLE, and it
  * must not churn the network on every surface remount.

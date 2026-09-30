@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { GatewayEvent } from '@hermes/shared'
 import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { useEffect } from 'react'

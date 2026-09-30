@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // The gap case: the agent is working, the composer's arc border is on and Stop
 // is armed, but the tail bubble has settled — a sealed interim row, or a turn
 // whose last message completed while the agent kept going. The transcript used

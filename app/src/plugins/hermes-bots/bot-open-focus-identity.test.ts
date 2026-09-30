@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * First-click home bounce (community report, Aug 2026): clicking a bot whose
  * canonical Bot Chat had been COMPRESSED landed on the Bots home instead of

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // Double-click an assistant reply to heart it (the iMessage gesture), gated on
 // the same opt-in toggle as the rest of message reactions.
 import { AssistantRuntimeProvider, type ThreadMessage, useExternalStoreRuntime } from '@assistant-ui/react'

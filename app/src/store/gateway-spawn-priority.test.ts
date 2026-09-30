@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // #102281: a user-initiated open must reach Electron main as a FOREGROUND dial

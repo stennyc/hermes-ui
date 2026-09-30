@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { act, render, renderHook } from '@testing-library/react'
 import { Suspense } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'

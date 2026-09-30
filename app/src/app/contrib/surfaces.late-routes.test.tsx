@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * A plugin page route registered AFTER the workspace surface mounts must
  * become navigable. Regression for late-loaded desktop plugins (disk plugins

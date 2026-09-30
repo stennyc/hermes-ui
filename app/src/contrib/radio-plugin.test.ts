@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { isValidElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 

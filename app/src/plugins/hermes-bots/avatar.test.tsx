@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * The avatar face: blobatar shape strings, the markup they render to, and the
  * catchlight polarity fix.

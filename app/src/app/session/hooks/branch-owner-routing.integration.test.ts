@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * End-to-end owner routing for BRANCH (the #97764-adjacent strand).
  *

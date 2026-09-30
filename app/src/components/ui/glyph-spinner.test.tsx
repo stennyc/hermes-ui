@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // GlyphSpinner animates on the compositor: every frame is in the DOM from
 // mount and a transform keyframes animation scrolls between them. It has no
 // timer and performs no per-frame DOM write, because the setInterval +

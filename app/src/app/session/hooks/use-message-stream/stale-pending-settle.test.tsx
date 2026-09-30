@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { GatewayEvent } from '@hermes/shared'
 // A turn that ends WITHOUT its message.complete (turn crash, reconnect gap,
 // steer race) used to leave its streaming bubble pending:true forever. The

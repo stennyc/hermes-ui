@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { atom } from 'nanostores'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 

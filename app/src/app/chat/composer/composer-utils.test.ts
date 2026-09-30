@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { Unstable_TriggerItem } from '@assistant-ui/core'
 import { afterEach, describe, expect, it } from 'vitest'
 

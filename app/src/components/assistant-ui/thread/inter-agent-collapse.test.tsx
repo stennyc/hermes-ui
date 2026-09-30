@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // Two contracts with no coverage before the invalidation-scoping work split
 // AssistantMessage into InterAgentAssistantMessage + AssistantMessageBody:
 //

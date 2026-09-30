@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { type GatewayEvent, registryBackendScopeKey } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { act, cleanup, render, waitFor } from '@testing-library/react'

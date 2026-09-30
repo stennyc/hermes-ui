@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // The overlay used to run its own 80ms setInterval + setState braille ticker —
 // the same mechanism class (per-tick DOM mutation scheduling a style recalc)
 // that GlyphSpinner was rewritten to remove. It now renders GlyphSpinner, so

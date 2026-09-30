@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { dehydrate, QueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * #94483: the Scheduled jobs pane read the shared roster with a bare
  * `$lastRoster.get()` while rendering. BotsPane owns the roster fetch, so

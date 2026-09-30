@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { act, cleanup, render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'

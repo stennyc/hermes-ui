@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { cleanup, render } from '@testing-library/react'
 import { atom } from 'nanostores'
 import type { ComponentProps, ReactNode } from 'react'

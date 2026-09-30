@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Pet tiles: frame 0 of a petdex spritesheet, cropped server-side by the
  * gateway's `pet.thumb` RPC and cached per slug.

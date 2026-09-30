@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { render, waitFor } from '@testing-library/react'
 import { Streamdown } from 'streamdown'
 import { describe, expect, it } from 'vitest'

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { AssistantRuntimeProvider, type ThreadMessage, useExternalStoreRuntime } from '@assistant-ui/react'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type * as HermesSdk from '@hermes/plugin-sdk'
 import { atom } from 'nanostores'
 import { afterEach, describe, expect, it, vi } from 'vitest'

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Which bot the Routines pane is scoped to.
  *

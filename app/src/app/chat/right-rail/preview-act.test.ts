@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { types } from 'node:util'
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'

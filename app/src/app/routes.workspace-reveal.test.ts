@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * A full page (Capabilities/Messaging/Artifacts/a contributed route) renders
  * INSIDE the `workspace` pane, so navigating to one has to front that pane —

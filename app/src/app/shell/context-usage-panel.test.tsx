@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'

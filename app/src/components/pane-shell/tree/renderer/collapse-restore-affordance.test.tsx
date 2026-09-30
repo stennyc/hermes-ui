@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { useStore } from '@nanostores/react'
 import { cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'

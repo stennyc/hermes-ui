@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // Pairing writes must target the profile the user is actually looking at.
 // The approve/revoke endpoints read `profile` off the BODY (a POST body is
 // not touched by query-param scoping), so a request that only carried

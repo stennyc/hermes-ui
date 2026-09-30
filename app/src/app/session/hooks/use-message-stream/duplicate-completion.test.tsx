@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { GatewayEventName } from '@hermes/shared'
 import { act, cleanup } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
