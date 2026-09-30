@@ -288,6 +288,14 @@ export default defineConfig({
   // adopted verbatim from upstream — they run via `npm run test:plugins`, not
   // vitest, so exclude them from vitest's default glob.
   test: {
+    // Pin the vite/react build flavor for test runs regardless of the shell's
+    // ambient NODE_ENV. An inherited NODE_ENV=production (common after working
+    // on the 9200 service) makes react resolve its PRODUCTION build, where
+    // `require('react').act` is undefined and react-dom/test-utils' `act`
+    // delegate throws "TypeError: React.act is not a function" for any test
+    // that calls render(). Pinning here (plus --mode=test on the npm script)
+    // keeps dev builds of react for the whole suite in any environment.
+    env: { NODE_ENV: 'test' },
     // NOTE: default environment is `node`. Files that render React DOM must
     // carry a per-file `// @vitest-environment jsdom` directive at their top
     // (repo convention) — do NOT flip the global default to jsdom, that pulls
