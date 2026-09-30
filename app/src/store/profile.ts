@@ -67,6 +67,42 @@ export const $profiles = atom<ProfileInfo[]>(NO_PROFILES)
 // outgoing source's profiles nor blank a source we already know.
 export const $profilesByConnection = atom<ReadonlyMap<string, ProfileInfo[]>>(new Map())
 
+// ── DCE-proof publication frame ─────────────────────────────────────────
+// nanostores ships "sideEffects: false", so a discarded `batch(cb)` STATEMENT
+// is treated as a pure call and its body — including every `.set()` inside —
+// is dropped from the production bundle. That silently emptied `$profiles`
+// (the refresh write block vanished from the shipped profile chunk while the
+// non-batched connection-wipe write survived), leaving the profile rail blank.
+// Route coalesced frames through this module-local helper instead: the
+// globalThis marker write below is an un-eliminable side effect, so the
+// bundler keeps the call and its body; `batch()` inside still coalesces the
+// frame's `.set()` calls into a single subscriber notification.
+// NOTE: the marker string literal is the build-time DCE detector — if
+// `__HERMES_PROFILE_FRAME__` is missing from the shipped chunk, the frame (and
+// every write it carries) was shaken again.
+function publishFrame(fn: () => void): void {
+  const startedAt = Date.now()
+
+  try {
+    ;(globalThis as Record<string, unknown>).__HERMES_PROFILE_FRAME__ = startedAt
+  } catch {
+    /* non-browser host (jsdom/SSR edge) */
+  }
+
+  // Drive batch() through the marker's RESULT channel: assigning its return
+  // to an un-eliminable globalThis write forces the bundler to keep evaluating
+  // `batch(fn)` — and therefore the whole `fn` closure with every `.set()` it
+  // carries. A bare discarded `batch(fn)` statement is exactly the shape that
+  // the `sideEffects:false` package mis-shakes, so it must never stand alone.
+  const frameResult: unknown = batch(fn)
+
+  try {
+    ;(globalThis as Record<string, unknown>).__HERMES_PROFILE_FRAME_RESULT__ = frameResult ?? startedAt
+  } catch {
+    /* non-browser host (jsdom/SSR edge) */
+  }
+}
+
 // Registry descriptors carry their connection id (a slug, so it never contains
 // ':'); legacy primaries are keyed by endpoint. Null is a reconnect blip (see
 // setConnection), not a source.
@@ -123,7 +159,7 @@ export function refreshProfiles(): Promise<ProfileInfo[]> {
         const { profiles } = await getProfiles()
 
         if (epoch === profileListEpoch) {
-          batch(() => {
+          publishFrame(() => {
             if (source !== null) {
               $profilesByConnection.set(new Map($profilesByConnection.get()).set(source, profiles))
             }
@@ -693,7 +729,7 @@ export async function ensureGatewayProfile(
       console.warn(`[profile] gateway activation for "${target}" did not land; active route is "${routeKey}"`)
     }
 
-    batch(() => {
+    publishFrame(() => {
       if (connection && landed) {
         setConnection(connection)
       } else {
@@ -885,7 +921,7 @@ export async function ensureGatewayAgent(
     // ONE publication frame, profile pointer + descriptor together. A null
     // descriptor keeps the previous one — fail open, resynced by
     // boot/reconnect later.
-    batch(() => {
+    publishFrame(() => {
       if (descriptor) {
         setConnection(descriptor)
       }
