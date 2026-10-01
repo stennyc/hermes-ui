@@ -85,6 +85,15 @@ function cacheKey(displayMode: boolean, value: string): string {
  * the VFile message stream), and on failure fall back to lenient mode so
  * the document still renders without a thrown exception. The lenient
  * fallback paints the equation in `errorColor` instead of erroring out.
+ *
+ * `strict: 'ignore'` (not the default `'warn'`) on the first pass: models
+ * routinely wrap *prose* in `$$…$$` (Chinese text, `%` comments, emoji).
+ * With the default, KaTeX emits one `console.warn` per non-LaTeX
+ * character (`unicodeTextInMathMode`, `commentAtEnd`, …) — dozens of
+ * identical lines per block, flooding the console. `'ignore'` keeps the
+ * rendering behavior identical (those issues are non-fatal) while
+ * `throwOnError: true` still throws on genuine parse errors, so the
+ * red-fallback below continues to fire exactly when it used to.
  */
 function renderMath(
   value: string,
@@ -96,7 +105,7 @@ function renderMath(
   let html: string
 
   try {
-    html = katex.renderToString(value, { displayMode, throwOnError: true })
+    html = katex.renderToString(value, { displayMode, strict: 'ignore', throwOnError: true })
   } catch (error) {
     const cause = error as Error
 
