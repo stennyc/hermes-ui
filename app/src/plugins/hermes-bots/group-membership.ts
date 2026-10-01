@@ -85,6 +85,20 @@ export function groupSessionMemberKey(key: string): string {
   return boundary === -1 ? rest : rest.slice(boundary + 2)
 }
 
+/** The thread half of a session key. Thread-scoped keys are
+ *  `thread:<thread>::<memberKey>`; a bare legacy key (pre-thread rooms) has no
+ *  prefix and is its room's `legacy` thread. */
+export function groupSessionThread(key: string): string {
+  if (!key.startsWith(GROUP_SESSION_THREAD_PREFIX)) {
+    return 'legacy'
+  }
+
+  const rest = key.slice(GROUP_SESSION_THREAD_PREFIX.length)
+  const boundary = rest.indexOf('::')
+
+  return boundary === -1 ? rest : rest.slice(0, boundary)
+}
+
 /** Whether this member already owns a thread-scoped session anywhere in the
  *  room — i.e. the room has been through the pre-thread migration. */
 export function hasThreadScopedGroupSession(sessions: Record<string, unknown>, memberKey: string): boolean {

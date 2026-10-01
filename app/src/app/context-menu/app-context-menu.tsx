@@ -21,6 +21,7 @@ import { hostPathLabel, hudForcesNativeLinks, normalizeExternalUrl, openExternal
 import { formatCombo } from '@/lib/keybinds/combo'
 import { isRemoteGateway } from '@/lib/media'
 import { reachablePreviewUrl } from '@/lib/preview-reach'
+import { isWebPlatform } from '@/lib/web-platform'
 import { openCommandPalette } from '@/store/command-palette'
 import { openPreview } from '@/store/preview'
 import { toggleProfileRailVisible } from '@/store/profile-rail-prefs'
@@ -625,11 +626,20 @@ export function AppContextMenu() {
   const open = useStore($contextMenu)
 
   useEffect(() => {
-    // stopPropagation beats other renderer handlers; preventDefault is never
-    // called because Chromium emits the main-process context-menu event (the
-    // spellcheck + image-coordinate source) only for unprevented gestures —
-    // and with no Menu.popup anywhere, "default" means no menu at all.
+    // stopPropagation beats other renderer handlers. In Electron the gesture is
+    // left un-prevented on purpose: the main process emits the spellcheck +
+    // image-coordinate context-menu event only for a non-prevented gesture, and
+    // with no Menu.popup anywhere "default" means no native menu at all. The web
+    // build has NO main-process menu — an un-prevented gesture would let the
+    // browser's native right-click menu open on top of ours, so there we call
+    // preventDefault() to suppress it. Preventing default never blocks our own JS
+    // listeners (Radix triggers included), so custom menus still open; only the
+    // native OS menu is withheld.
     const onContextMenu = (event: MouseEvent) => {
+      if (isWebPlatform()) {
+        event.preventDefault()
+      }
+
       const element = event.target instanceof Element ? event.target : null
 
       // Surfaces with their own Radix context menu keep the whole gesture.

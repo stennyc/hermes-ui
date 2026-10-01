@@ -202,6 +202,10 @@ export interface BotRequestOptions {
    *  a cold backend spawn takes the pool's reserved slot; leave unset for
    *  passive roster warming. Only source-scoped routes can carry it. */
   spawnPriority?: 'background' | 'foreground'
+  /** Per-call RPC deadline (ms). Routed (source-scoped) calls forward it to
+   *  `host.requestProfile`; the local fallback path ignores it (its socket
+   *  carries its own gateway-side deadline). */
+  timeoutMs?: number
 }
 
 export async function requestForBot<T = unknown>(
@@ -222,8 +226,15 @@ export async function requestForBot<T = unknown>(
 
       // Keep the three-argument shape when no options were given so older
       // desktop shells (and the arity-pinning tests) see the same call.
-      return await (options?.spawnPriority
-        ? host.requestProfile(route, method, routedParams, undefined, { spawnPriority: options.spawnPriority })
+      const hasRouteOptions = options?.spawnPriority || options?.timeoutMs !== undefined
+      return await (hasRouteOptions
+        ? host.requestProfile(
+            route,
+            method,
+            routedParams,
+            options?.timeoutMs,
+            options?.spawnPriority ? { spawnPriority: options.spawnPriority } : undefined,
+          )
         : host.requestProfile(route, method, routedParams))
     } catch (error) {
       // React 19 formats query errors with `(error.name || '').trim()`. IPC /

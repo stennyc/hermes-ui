@@ -3,6 +3,13 @@ import { groupSpeakerLabel } from './group-chat'
 import { groupMemberKey } from './group-membership'
 import type { GroupMember, GroupMessage, GroupMessageAuthor } from './types'
 
+/** The opener of the room engine's own per-turn prompt header (see
+ *  `buildGroupChatTurnPrompt` below and the monolith's room prompt). A
+ *  role=user row that begins with it is the harness relaying the room
+ *  transcript into a member's session, not an external message from that
+ *  member — external-writes mirroring excludes it. */
+export const GROUP_PROMPT_HEADER_PREFIX = '[Group chat:'
+
 // Openers of Hermes' own control frames (the mid-turn steer marker, the compaction
 // handoff, runtime/system notes). A member reply is republished to every peer inside
 // a role=user prompt, so a reply reproducing one of these reads as harness input to

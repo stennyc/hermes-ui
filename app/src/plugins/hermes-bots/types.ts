@@ -196,6 +196,11 @@ export interface GroupChat {
    *  writer (hydrate, server-sync merge, updateGroupChat, room reset) seeds
    *  the map, and the turn engine indexes it unguarded. */
   watermarks: Record<string, number>
+  /** How far each external (CLI/terminal-written) `<thread>::<member>` session
+   *  has been mirrored into `log`, keyed like `watermarks` by
+   *  `groupSessionKey(thread, member)`. Optional: the mirror is newer than the
+   *  room record, so legacy rooms carry no cursor until the first sweep. */
+  externalCursors?: Record<string, number>
 }
 
 export type GroupPromptKind = 'approval' | 'clarify'
