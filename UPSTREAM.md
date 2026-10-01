@@ -101,3 +101,92 @@ for B1-B7 executors:
    served byte count against the local `dist` build; use minify-surviving markers / string
    literals (not symbol names) when grepping chunks; i18n copy lives in
    `assets/i18n-<hash>.js`, not the main chunk.
+
+### 2026-10-01 - B6 capabilities/onboarding trim verdict + deferred lists (task t_3edcd455)
+
+**Decision D1 (user, 2026-10-01): the `capabilities` / `onboarding` sub-systems do NOT go
+into the web dashboard.** Nothing in `app/capabilities`, the upstream onboarding stores,
+or the onboarding components was ported in B1-B5, and nothing will be ported in B7/B8
+unless D1 is revisited. All entries below are deferred for a future sync round.
+
+**B6 trim verdict: EMPTY (空过, no code change).** Scanned every file B1-B5 committed
+(129 files across commits `60e3bd9`/`3355fee`/`d55ac8c`/`51d3cf5`/`3129486`/`8caf6c8`)
+for `import`/`require` of `*capabilit*` / `*onboarding*` specifiers: the single hit is
+`app/src/app/settings/model-settings.tsx:35` → `@/store/onboarding`, which predates B1
+(the fork's own 8.18-era onboarding surface, still shipped and D1-inert) — B1 only touched
+a `String()` wrap in that file. `store/sidebar-nav.ts` mentions the `'capabilities'`
+sidebar-row id only as a string literal, not an import. Conclusion: **no B1-B5 shared file
+imports new upstream capabilities/onboarding code, so no web-adapted trimming was needed;
+`tsc -p . --noEmit` stayed at 0 errors** (pre-existing `group-history.test.ts` supercompress
+index issue documented below is the only known pre-B6 error class, spec DoD §6.2-excluded).
+
+**D1 skip list — upstream-only `capabilities` / `onboarding` files at `d0288be5b3`
+(v2026.9.24), NOT ported to the web fork (skip on future syncs unless D1 changes):**
+- `app/capabilities/` — the whole sub-system (88 upstream files: `catalog/`, `connectors/`,
+  `mcp/`, `plugins/`, `skills/`, `toolsets/`, `index.tsx`, `primitives.tsx`,
+  `scope-selector.tsx`, `index.test.tsx` and their tests).
+- `store/onboarding-plugins.ts`, `store/onboarding-plugin-outcomes.ts`
+  (+ `onboarding-plugin-outcomes.test.ts`), `store/onboarding-scope.ts`,
+  `store/onboarding-owner.test.ts` — upstream-only onboarding stores (the fork keeps its
+  own pre-existing `store/onboarding*` set, which D1 does not remove).
+- `app/contrib/onboarding-kickoff.test.ts`, `components/onboarding/flow.test.tsx`,
+  `components/onboarding-chat/{cards/connectors.test.tsx, cards/look.test.tsx,
+  gate.test.tsx, guide-loading.css, guide-loading.test.tsx, guide-loading.tsx,
+  mode-layout.test.ts, onboarding-first-use.test.ts, persisted-handoff.ts,
+  plugins-runbook.test.ts}` — upstream-only onboarding tests / pieces.
+
+**B3 unported (task t_da68bcbf, `d55ac8c`) — deferred to B6/B8:**
+- New-store stop-rules: `store/onboarding-plugins.ts` / `onboarding-plugin-outcomes.ts` /
+  `onboarding-scope.ts` (D1 onboarding cut); `store/profile-dot-state.ts` (imports
+  `./session-states` → D2 session-states extraction, do not pull it in; its up-to-date
+  unread-marker attribution lives inside that extraction).
+- Shared-store diffs NOT byte-copied (each has fork-only web-adaptation and/or cross-block
+  deps): `session-states.ts` (D2 extraction, explicit out-of-B3-scope stop-rule);
+  `profile.ts` (carries the DCE-proof `globalThis.__HERMES_PROFILE_FRAME` marker — a
+  byte-copy would silently wipe the shipped profile-rail DCE fix; hand-merge only);
+  `session.ts` (upstream drops fork-only atoms `$attentionSessionIds`,
+  `$sessionProfileTotals`, `$sessionsTotal`, `setSessionsTotal`,
+  `syncCronModelImpactConnection` that fork-only `store/sidebar-cache.ts` still imports);
+  `gateway.ts` (58 fork-only web-bridge lines + dynamic `import('@/store/session-states')`);
+  plus the remaining ~44 diffed shared stores — each has ≥1 fork-only line and/or pulls
+  B4/D2 symbols, so a blind byte-copy is unsafe; they are per-file hand-merges belonging
+  to later blocks, not a forced B3 copy.
+- Pre-existing, unrelated (recorded, not caused by B3): the `group-history.test.ts`
+  supercompress index TS7053 (spec DoD §6.2-excluded) and 3 `sidebar-collapse-persistence`
+  failures that fail identically on the pristine pre-B3 tree.
+
+**B4 unported (task t_eda436b2, `51d3cf5`) — deferred to B5/B6/B8:**
+- 28 B4-area files byte-inspected then removed (each hits a D2/B2/B3-deferred expanded
+  API; no existing fork file imports any of the 45 B4 files, so removal is reachability-safe).
+  Representative blockers: `window.hermesDesktop` expanded-bridge APIs
+  (`probeLocalBackend` / `hudModifier` / `minimizeToTray` / `windowControls` — web-bridge
+  work), expanded `types/hermes.ts` / `chat-messages` types, `SelectSeparator` +
+  `size="grip"` B2 UI component diffs, the 8-file `app/settings/local-models-*` cluster
+  (pure upstream rewrite around `@tanstack/react-query` + `LocalModelsScope`; its entry
+  point `local-models-settings.tsx` is NOT a B4 file and its only consumer
+  `providers-settings.tsx` is a shared file B5 owns), `settings-manifest` registry (dead
+  code on disk until the fork's `settings/index.tsx` adopts the subpage-driven layout —
+  B6's trim pass may remove it), `rewindTranscriptTail` / `$restoredDraftNotice` /
+  `hydrateStoredSessionTranscript` and other B2/B3-deferred store diffs.
+- 1 test dropped (un-verifiable under 8GB-box memory pressure, not a port regression):
+  `app/right-sidebar/terminal/reveal-focus.test.ts` — source `reveal-focus.ts` IS kept
+  (clean, web-applicable); the test exercises a rAF + `document.activeElement` focus-reveal
+  race and needs upstream's 5-arg `bindToolPaneCollapse($rail)` + `$showsAdvancedChrome`
+  (fork pane-shell diff, B5 territory) → re-verify once B5 lands that diff.
+
+**B5 unported (task t_8f222255, `8caf6c8`) — deferred to B6/B8:**
+- 8 `screen-*` files need the 9.24 multi-connection display-lease SDK surface
+  (`resolveSiblingWsUrl` / `DisplayLease` / `DisplayStatus` / `host.revealPane` /
+  5-arg `host.requestProfile` spawnPriority) that the fork's 8.18-era plugin-SDK lacks —
+  D2 wall, so they are skipped (their 3 importers `bot-row.tsx` / `cron.tsx` /
+  `plugin.tsx` stay in their web-adapted form).
+- 2 module test files removed as un-runnable without the skipped flow wiring:
+  `group-compress.test.tsx` (needs 9.24 `group-chat-view.tsx` `compressMember` dialog)
+  and `group-external-writes.test.ts` (needs 9.24 `group-turns.ts` sweep wiring).
+- 3 fork-divergent shared merges NOT done this block (each cascades into the D2 SDK
+  wall, so the fork keeps its 8.18 + 8145009-backfill form): `group-chat.ts`,
+  `group-test-utils.ts`, `group-chat-view.tsx`.
+
+**Pre-existing, out-of-scope error class (spec DoD §6.2, recorded in B3/B4/B5/B6):**
+- `group-history.test.ts` — supercompress index TS7053, fails identically on the pristine
+  pre-sync tree; excluded from every block's "0 new errors" gate.
