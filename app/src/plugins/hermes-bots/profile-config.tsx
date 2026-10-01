@@ -18,7 +18,7 @@ import {
   surfaceModelSwitchConfirm,
   Textarea
 } from '@hermes/plugin-sdk'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { $lastRoster, ROSTER_KEY } from './data'
 import { labeled, ResizableFrame } from './dialog-parts'
@@ -132,6 +132,23 @@ export function AdvancedProfileConfig({ bot, state, setState }: AdvancedProfileC
   const [loaded, setLoaded] = useState(false)
   const [unsupported, setUnsupported] = useState(false)
   const [skillFilter, setSkillFilter] = useState('')
+  // The fetch kickoff above re-renders this component once (render-phase
+  // `setLoaded(true)`), and the MCP branch calls `host.getGateway()` in its
+  // JSX — so a plain call would read the ambient gateway once PER RENDER.
+  // The gateway instance is stable for the panel's life, so cache the first
+  // read: remote bots never reach this branch (they fail closed above), so
+  // they still trigger ZERO ambient reads; local bots read exactly once
+  // instead of once-per-render. Wrap in an object so a genuine `null`
+  // return (no gateway) is distinguishable from "not read yet".
+  const ambientGatewayRef = useRef<{ readonly value: ReturnType<typeof host.getGateway> } | null>(null)
+
+  const mcpGateway = () => {
+    if (ambientGatewayRef.current === null) {
+      ambientGatewayRef.current = { value: host.getGateway() }
+    }
+
+    return ambientGatewayRef.current.value
+  }
   // Component body = render path: degrade an orphaned row to the bot's own
   // name scope instead of throwing into the dialog's error boundary.
   const botRoute = resolveBotConnectionRoute(bot).route
@@ -439,7 +456,7 @@ export function AdvancedProfileConfig({ bot, state, setState }: AdvancedProfileC
                 maxHeight: 360
               }}
             >
-              <McpTab gateway={host.getGateway()} profile={backendScope} />
+              <McpTab gateway={mcpGateway()} profile={backendScope} />
             </div>
           ) : mcpList.length === 0 ? (
             <div className="px-1 py-2 text-center text-xs text-(--ui-text-tertiary)">{b.tools.noMcpServers}</div>

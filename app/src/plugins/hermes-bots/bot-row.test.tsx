@@ -17,7 +17,7 @@
  */
 
 import type * as HermesSdk from '@hermes/plugin-sdk'
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { BotRow, GroupRow } from './bot-row'
@@ -77,6 +77,12 @@ beforeEach(() => {
   openRosterBot.mockResolvedValue(true)
   requestProfile.mockResolvedValue({})
 })
+
+// RTL's auto-cleanup only self-registers when a global `afterEach` exists
+// (vitest runs without `globals`), so the rows this file renders into
+// `document.body` would otherwise persist across tests and break the
+// global-`screen` lookups. Unmount explicitly.
+afterEach(cleanup)
 
 describe('group-turn presence', () => {
   it('updates only the exact member face and clears it when the room stops', () => {

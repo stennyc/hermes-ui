@@ -404,7 +404,18 @@ export default defineConfig({
       '@hermes/plugin-sdk': path.resolve(__dirname, './src/sdk/index.ts'),
       '@hermes/shared': path.resolve(__dirname, '../shared/src')
     },
-    dedupe: ['react', 'react-dom']
+    dedupe: ['react', 'react-dom'],
+    // Vite's DEFAULT extension order tries `.js` before `.tsx`/`.ts`, so a
+    // bare `./plugin` import in a folder that has BOTH `plugin.js` and
+    // `plugin.tsx` resolves to the `.js`. hermes-bots is exactly that case:
+    // `plugin.js` is the legacy 8.18 single-file monolith (still read from
+    // disk by the node:test suites under tests/*.mjs) while `plugin.tsx` is
+    // the live i18n-aware orchestrator the vitest suite drives. tsc (allowJs:
+    // false) already resolves those imports to `plugin.tsx`; mirror that here
+    // so extensionless imports prefer the TypeScript source and never shadow
+    // the live module with the stale one. No other folder has a `.js`/`.ts`
+    // sibling collision, so this only ever flips the hermes-bots case.
+    extensions: ['.ts', '.tsx', '.mts', '.jsx', '.mjs', '.js', '.json']
   },
   server: {
     // /api, /auth, /login (+ the /api/ws upgrade) are handled by
