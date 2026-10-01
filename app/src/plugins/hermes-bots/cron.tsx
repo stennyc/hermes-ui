@@ -48,6 +48,21 @@ import { botConnectionRoute, botRosterMeta, requestForBot } from './routing'
 import { ID } from './shared'
 import type { BotMeta, RosterRow, RoutineJob } from './types'
 
+// The pure prompt logic (legacy recognition, normalization, input guards and the
+// delegation wrapper) lives in `./cron-prompt-logic` so a node-environment test
+// can exercise it without importing this file's UI tree. Re-exported here so the
+// module's public prompt API is unchanged.
+import {
+  BOT_TAG_RE,
+  isLegacyDelegatedRoutine,
+  normalizedProfileName,
+  routineBot,
+  routineInputError,
+  routinePrompt
+} from './cron-prompt-logic'
+
+export { isLegacyDelegatedRoutine, normalizedProfileName, routineInputError, routinePrompt }
+
 const ROUTINES_KEY = [ID, 'routines']
 
 /** Last good cron list, same idea as the roster snapshot. */
@@ -70,9 +85,6 @@ function showsHandle(name: string, meta: BotMeta | null | undefined, bot?: Roste
 // bot profile uses the plain instruction; a different profile keeps the
 // hermes -p <bot> chat delegation wrapper so the run reaches that bot's
 // history. The tile follows the bot you're chatting with (gateway profile).
-const BOT_TAG_RE = /^\[bot:([a-z0-9][a-z0-9_-]*)\]\s*/i
-const SAFE_ROUTINE_MARKER = '[bot-mode:routine:v2] '
-const LEGACY_DELEGATED_ROUTINE_PREFIX = 'You are running the scheduled routine "'
 
 /** A routine's owner: a roster row, a bare profile name, or nothing resolved yet. */
 type RoutineOwner = RosterRow | string | null | undefined
@@ -84,20 +96,8 @@ interface RoutineListResult {
   scoped?: string
 }
 
-function routineBot(job: RoutineJob | null | undefined): null | string {
-  const match = BOT_TAG_RE.exec(job?.name || '')
-
-  return match ? match[1].toLowerCase() : null
-}
-
 function routineTitle(job: RoutineJob | null | undefined): string {
   return (job?.name || '').replace(BOT_TAG_RE, '') || 'Untitled job'
-}
-
-export function isLegacyDelegatedRoutine(job: RoutineJob | null | undefined): boolean {
-  const preview = typeof job?.prompt_preview === 'string' ? job.prompt_preview : job?.prompt
-
-  return Boolean(routineBot(job) && typeof preview === 'string' && preview.startsWith(LEGACY_DELEGATED_ROUTINE_PREFIX))
 }
 
 export async function loadRoutines(owner: RoutineOwner): Promise<RoutineListResult> {
@@ -245,44 +245,6 @@ export function routineFilterHint(all: RoutineJob[], jobs: RoutineJob[]): null |
   }
 
   return botsText().cron.filterHint
-}
-
-export function normalizedProfileName(profile: unknown): string {
-  return typeof profile === 'string' ? profile.trim().toLowerCase() : ''
-}
-
-function shellQuote(value: unknown): string {
-  return `'${String(value).replaceAll("'", "'\"'\"'")}'`
-}
-
-export function routineInputError(title: string, instruction: string): null | string {
-  if (String(title).includes('\0')) {
-    return 'Job name cannot contain NUL (U+0000).'
-  }
-
-  if (String(instruction).includes('\0')) {
-    return 'Job instruction cannot contain NUL (U+0000).'
-  }
-
-  return null
-}
-
-export function routinePrompt(
-  bot: string | undefined,
-  title: string,
-  instruction: string,
-  activeProfile: string
-): string {
-  if (normalizedProfileName(bot) && normalizedProfileName(bot) === normalizedProfileName(activeProfile)) {
-    return instruction
-  }
-
-  return (
-    `${SAFE_ROUTINE_MARKER}You are running the scheduled routine "${title}" for agent '${bot}'. ` +
-    `Execute it AS that agent so the run lands in its own history: run this in the terminal and relay the output:\n\n` +
-    `hermes -p ${shellQuote(bot)} chat -c ${shellQuote(`Routine: ${title}`)} -q ${shellQuote(`[Scheduled routine] ${instruction}`)}\n\n` +
-    `If the command fails, report the error instead.`
-  )
 }
 
 function scheduleLabel(schedule: string | undefined): string {
