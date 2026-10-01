@@ -3901,7 +3901,7 @@ export const esOverrides = {
     profileRail: 'Barra de perfiles',
     nav: {
       'new-session': 'Nueva sesión',
-      capabilities: 'Capacidades',
+      skills: 'Capacidades',
       messaging: 'Mensajería',
       artifacts: 'Artefactos',
       cron: 'Tareas programadas'

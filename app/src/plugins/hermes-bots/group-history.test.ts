@@ -256,7 +256,11 @@ describe('backfillGroupRoomHistory', () => {
     expect(log.find(entry => entry.from.name === 'coder')?.text).toBe('Confirmed — the G pass is disabled.')
 
     // The room was persisted (localStorage is no longer NULL after a backfill).
-    expect((gateway.storage.get('group-chats') || {})['supercompress fix'].log).toHaveLength(2)
+    const persistedRooms = (gateway.storage.get('group-chats') || {}) as Record<
+      string,
+      { log: Array<{ from: { name: string; kind?: string } } & object> }
+    >
+    expect(persistedRooms['supercompress fix'].log).toHaveLength(2)
 
     // It asked the server for the hidden per-group listing (per-member profile)
     // + the transcripts. The title filter rides the client (the contract has no

@@ -3911,7 +3911,7 @@ export const deOverrides = {
     profileRail: 'Profil-Leiste',
     nav: {
       'new-session': 'Neue Session',
-      capabilities: 'Fähigkeiten',
+      skills: 'Fähigkeiten',
       messaging: 'Messaging',
       artifacts: 'Artefakte',
       cron: 'Geplante Jobs'

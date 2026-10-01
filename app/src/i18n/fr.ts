@@ -3920,7 +3920,7 @@ export const frOverrides = {
     profileRail: 'Barre des profils',
     nav: {
       'new-session': 'Nouvelle session',
-      capabilities: 'Capacités',
+      skills: 'Capacités',
       messaging: 'Messagerie',
       artifacts: 'Artefacts',
       cron: 'Tâches planifiées'
