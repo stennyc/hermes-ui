@@ -460,12 +460,151 @@ function downloadBlob(blob: Blob, filename: string): void {
 }
 
 /**
- * Everything the web build supports. `terminal`, `git` and `zoom` are
- * intentionally absent: their consumers probe for bridge presence and
- * self-disable (terminal), or never reach the native path in remote mode
- * (git), or render nothing (zoom).
+ * Web zoom: a browser has no OS window to magnify (the desktop's zoom lives
+ * in the Electron main process via `webContents.setZoom`), so the web bridge
+ * owns it itself: CSS `zoom` on the root element magnifies the whole app the
+ * way Chromium page zoom does, and localStorage persistence keeps it across
+ * reloads (a WebView reload re-reads it at install). The `storage` event keeps
+ * sibling tabs in lockstep; it only fires in the other tabs, so it cannot
+ * echo back into the writing one.
  */
-type WebBridge = Omit<Window['hermesDesktop'], 'terminal' | 'git' | 'zoom'>
+const ZOOM_STORAGE_KEY = 'hermes-web.zoom.v1'
+
+function clampZoomPercent(value: number): number {
+  return Number.isFinite(value) ? Math.min(200, Math.max(50, Math.round(value))) : 100
+}
+
+/** Chromium zoom levels: magnification = 1.2 ** level (level 0 = 100%). */
+function zoomLevelForPercent(percent: number): number {
+  return Math.round((Math.log(percent / 100) / Math.log(1.2)) * 100) / 100
+}
+
+function loadStoredZoomPercent(): number {
+  try {
+    const raw = localStorage.getItem(ZOOM_STORAGE_KEY)
+    if (raw !== null && Number.isFinite(Number(raw))) {
+      return clampZoomPercent(Number(raw))
+    }
+  } catch {
+    // Storage unavailable (private mode / non-browser host): fall through.
+  }
+  return 100
+}
+
+function createWebZoom() {
+  let percent = loadStoredZoomPercent()
+  const listeners: Array<(payload: { level: number; percent: number }) => void> = []
+  const payload = () => ({ level: zoomLevelForPercent(percent), percent })
+
+  // Root font-size scaling, NOT CSS `zoom`: the app shell is a fixed-viewport
+  // `h-[100dvh]` + `overflow-hidden` layout (app-shell.tsx), so `zoom` — which
+  // magnifies content without shrinking the viewport units — grew the shell
+  // past the physical viewport and clipped the bottom composer. Every font and
+  // Tailwind spacing in the app is rem-based (`html { font-size: var
+  // (--dt-base-size, 0.875rem) }`), so scaling the root font reflows WITHIN
+  // the fixed viewport: the chat pane (flex-1) scrolls internally, the
+  // composer stays pinned to the bottom.
+  //
+  // The baseline is the stylesheet's own root size (typically 0.875rem =
+  // 14px, per-theme), not the browser default — so 125% means "25% larger
+  // than this app's native rendering". Clearing the inline value first makes
+  // getComputedStyle report that stylesheet baseline instead of our own
+  // previous inline px.
+  const applyZoom = (value: number): void => {
+    document.documentElement.style.fontSize = ''
+
+    if (value === 100) {
+      return
+    }
+
+    const measured = parseFloat(getComputedStyle(document.documentElement).fontSize)
+    const baseline = Number.isFinite(measured) ? measured : 16
+
+    document.documentElement.style.fontSize = `${baseline * (value / 100)}px`
+  }
+
+  // Apply the persisted magnification at install time so the first paint is
+  // already at the user's chosen scale.
+  try {
+    applyZoom(percent)
+  } catch {
+    // No DOM on this host — the reported value stays authoritative.
+  }
+
+  const setPercent = (value: number): void => {
+    const next = clampZoomPercent(value)
+
+    if (next === percent) {
+      return
+    }
+
+    percent = next
+
+    try {
+      applyZoom(next)
+      localStorage.setItem(ZOOM_STORAGE_KEY, String(next))
+    } catch {
+      // Host without a DOM or storage: the value still lives in `percent`
+      // and the bridge keeps reporting it.
+    }
+
+    for (const listener of listeners) {
+      listener(payload())
+    }
+  }
+
+  // Sibling-tab sync. `storage` never fires in the tab that wrote the value,
+  // so this cannot loop back into `setPercent`.
+  window.addEventListener('storage', event => {
+    if (event.key !== ZOOM_STORAGE_KEY || event.newValue === null) {
+      return
+    }
+
+    const next = clampZoomPercent(Number(event.newValue))
+
+    if (next === percent) {
+      return
+    }
+
+    percent = next
+
+    try {
+      applyZoom(next)
+    } catch {
+      // No DOM on this host — the reported value stays authoritative.
+    }
+
+    for (const listener of listeners) {
+      listener(payload())
+    }
+  })
+
+  return {
+    factor: () => percent / 100,
+    get: async () => payload(),
+    onChanged: (callback: (payload: { level: number; percent: number }) => void) => {
+      listeners.push(callback)
+
+      return () => {
+        const index = listeners.indexOf(callback)
+
+        if (index !== -1) {
+          listeners.splice(index, 1)
+        }
+      }
+    },
+    setPercent
+  }
+}
+
+/**
+ * Everything the web build supports. `terminal` and `git` are intentionally
+ * absent: their consumers probe for bridge presence and self-disable
+ * (terminal), or never reach the native path in remote mode (git). `zoom` is a
+ * real browser implementation (see `createWebZoom`), so the Settings UI Scale
+ * row works in plain browsers and Capacitor WebViews alike.
+ */
+type WebBridge = Omit<Window['hermesDesktop'], 'terminal' | 'git'>
 
 /**
  * Chromium can resolve Clipboard API writes without updating the system
@@ -840,7 +979,8 @@ export function createWebBridge(): Window['hermesDesktop'] {
         throw new Error('marketplace themes are unavailable in the web app')
       },
       searchMarketplace: async () => []
-    }
+    },
+    zoom: createWebZoom()
   }
 
   return bridge as Window['hermesDesktop']

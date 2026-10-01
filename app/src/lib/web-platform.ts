@@ -32,9 +32,11 @@ export function supportsLocalPty(): boolean {
 }
 
 /**
- * True when native window zoom is available. The web bridge omits `zoom`
- * (browser page zoom is the user's own Ctrl/Cmd +/-), so this is a direct
- * presence probe.
+ * True when window zoom is available. Both the Electron bridge (main-process
+ * `webContents` zoom) and the web bridge (`createWebZoom`, which scales the
+ * root font size so the fixed-viewport shell reflows rather than clipping)
+ * expose `zoom`, so this presence probe is true in every build; it exists for
+ * consumers that still need to distinguish "zoom exists at all".
  */
 export function supportsWindowZoom(): boolean {
   return typeof window !== 'undefined' && !!window.hermesDesktop?.zoom
