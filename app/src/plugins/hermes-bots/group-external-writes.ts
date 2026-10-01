@@ -195,13 +195,55 @@ export function mirrorExternalGroupWrites(
   })
 }
 
+/** The sweep core: mirror `member`'s stored session tails whose threads the
+ *  room still shows. Exposed without the idle-only room guard so a future
+ *  mid-drive caller can reuse it; today's sole live path is the idle sweep
+ *  on room open. The mirror cursor keeps every row landing exactly once no
+ *  matter how often the idle sweep re-runs it. Deliberately NOT run per
+ *  responder mid-round: re-resuming members up front or mid-drive burns
+ *  session.resume touches the round engine's stranded/harvest bookkeeping
+ *  budgets (a confirmed-busy member must only ever be resumed by the
+ *  harvest pass) and lands mirrored rows inside the drive's commit window,
+ *  which the round identity invariants do not tolerate. */
+export async function sweepMemberExternalWrites(group: string, member: GroupMember) {
+  const room = ($groupChats.get()[group] || {}) as GroupChatRoom
+  const shown = new Set<string>(['legacy', ...(room.log || []).map(entry => entry.thread || 'legacy')])
+  const sessions = room.sessions || {}
+  const memberKey = groupMemberKey(member)
+
+  for (const [key, stored] of Object.entries(sessions)) {
+    const thread = groupSessionThread(key)
+
+    if (typeof stored !== 'string' || groupSessionMemberKey(key) !== memberKey || !shown.has(thread)) {
+      continue
+    }
+
+    let state: { messages?: GroupTranscriptRow[]; running?: boolean } | null = null
+
+    try {
+      state = await requestForBot(member, 'session.resume', { session_id: stored, profile: member.name })
+    } catch {
+      continue // unreachable or gone: nothing to mirror from here
+    }
+
+    if (!state?.running && ($groupChats.get()[group] || {}).sessions?.[key] === stored) {
+      mirrorExternalGroupWrites(group, member, thread, state?.messages)
+    }
+  }
+}
+
 /** Idle trigger: read every member session the room still shows a thread for
  *  and mirror what reached it, without the room driving anyone. Runs when the
  *  room is opened, so a Bot posting reports into its own room session between
  *  rounds surfaces the next time the user looks — not only once the user
  *  types and that member happens to be a responder. One `session.resume` per
- *  stored session, bounded by the room's own (trimmed) log; no polling. A
- *  room mid-round is left to the round, which sweeps its responders itself. */
+ *  stored session, bounded by the room's own (trimmed) log; no polling. The
+ *  drive path deliberately does NOT mirror: sweeping up front or mid-round
+ *  adds `session.resume` touches the round engine's stranded/harvest
+ *  bookkeeping does not budget for (a confirmed-busy member must only ever
+ *  be resumed by the harvest pass), and lands mirrored rows inside the
+ *  drive's commit window, which the room-identity invariants reject.
+ *  Consequence: external rows surface on the next open — late, never lost. */
 export async function sweepExternalGroupWrites(group: string, members: GroupMember[]) {
   const room = ($groupChats.get()[group] || {}) as GroupChatRoom
 
@@ -209,30 +251,7 @@ export async function sweepExternalGroupWrites(group: string, members: GroupMemb
     return
   }
 
-  const shown = new Set<string>(['legacy', ...(room.log || []).map(entry => entry.thread || 'legacy')])
-  const sessions = room.sessions || {}
-
   for (const member of members) {
-    const memberKey = groupMemberKey(member)
-
-    for (const [key, stored] of Object.entries(sessions)) {
-      const thread = groupSessionThread(key)
-
-      if (typeof stored !== 'string' || groupSessionMemberKey(key) !== memberKey || !shown.has(thread)) {
-        continue
-      }
-
-      let state: { messages?: GroupTranscriptRow[]; running?: boolean } | null = null
-
-      try {
-        state = await requestForBot(member, 'session.resume', { session_id: stored, profile: member.name })
-      } catch {
-        continue // unreachable or gone: nothing to mirror from here
-      }
-
-      if (!state?.running && ($groupChats.get()[group] || {}).sessions?.[key] === stored) {
-        mirrorExternalGroupWrites(group, member, thread, state?.messages)
-      }
-    }
+    await sweepMemberExternalWrites(group, member)
   }
 }

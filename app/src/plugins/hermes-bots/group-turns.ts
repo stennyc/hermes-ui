@@ -306,6 +306,18 @@ export async function ensureGroupChatSession(
           ...(r.sessionOwners || {}),
           [key]: groupSessionOwner(member)
         }
+        // A freshly minted session's transcript is empty, so the external
+        // mirror can track it from row 0. Without this the sweep's first
+        // sight of the session would park the cursor at the transcript's
+        // current end and every CLI/cron row that landed in the gap would be
+        // silently parked, never mirrored. (#93813) The adopt path (resume
+        // found an existing session) deliberately does NOT seed: its history
+        // is already the member's, and the mirror's first-sight-at-end keeps
+        // it from replaying that pre-room conversation into the log.
+        r.externalCursors = {
+          ...(r.externalCursors || {}),
+          [key]: 0
+        }
 
         return r
       })

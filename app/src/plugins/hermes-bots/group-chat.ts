@@ -748,6 +748,11 @@ export function durableGroupChatRooms(all: Record<string, GroupChat> = $groupCha
       sessions: room.sessions || {},
       stranded: room.stranded || {},
       members: Array.isArray(room.members) ? room.members : [],
+      // External mirror cursors must ride the durable record: a restarted
+      // window (or a second Desktop) re-hydrates from here, and without the
+      // cursor the mirror re-reads the whole session and replays every
+      // external row into the log again. (#93813)
+      externalCursors: room.externalCursors || {},
       // Immutable room identity: without this, a room merged in via the
       // remote-sync path (the only caller of this function) loses its
       // roomId on the next cold hydrate and falls back to legacy
@@ -1431,6 +1436,12 @@ export function updateGroupChat(
         // with the pre-turn message baseline. Survives reloads so finished
         // work is still harvested after a window restart.
         stranded: room.stranded || {},
+        // #93813: external-mirror cursors. A restarted window / second
+        // Desktop re-hydrates from this record; without the cursor the
+        // mirror re-reads each member session from row 0 and replays every
+        // external row into the log again — the "exactly once" contract
+        // (#93813) breaks on the very reload it is meant to protect.
+        externalCursors: room.externalCursors || {},
         // #93129: sticky per-member stop holds. Watermarks persist, so holds
         // must too — otherwise a window restart silently releases a bot the
         // user explicitly stopped.

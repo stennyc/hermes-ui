@@ -82,6 +82,7 @@ import {
   liveGroupChatNames
 } from './group-membership'
 import { groupMentionComponents, groupMentionText } from './group-mention-text'
+import { sweepExternalGroupWrites } from './group-external-writes'
 import {
   clearGroupComposerDraft,
   closeGroupChatMainTab,
@@ -1425,6 +1426,14 @@ export function openGroupChat(group: string): void {
   })
   const ownerKey = groupWorkspaceOwnerKey(group)
   setBotsWorkspaceOwner(ownerKey, null, 'New group conversations start in the group composer.')
+
+  // Open edge (#93813): whatever reached a member's hidden session outside the
+  // room engine since the last look — a CLI resume, a cron delivery, the agent's
+  // own tools — surfaces into the room log now, before the user reads it. Idle
+  // semantics: the sweep is a no-op while a round is driving the room (the
+  // round sweeps its own responders) or the room is gone. Members resolve from
+  // the live roster + room record exactly as the view would seat them.
+  void sweepExternalGroupWrites(group, groupChatMemberBots(group, $lastRoster.get(), $botMeta.get())).catch(() => 0)
 
   if (typeof host.openWorkspace === 'function') {
     try {
