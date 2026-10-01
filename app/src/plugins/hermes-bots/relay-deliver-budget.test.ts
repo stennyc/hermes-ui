@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 
 // #93911 review follow-up: the Desktop deadline for bot_relay.deliver mirrors
 // three backend numbers. Nothing in the type system links a TS constant to a
@@ -11,10 +11,44 @@ import { describe, expect, it } from 'vitest'
 // Without it, raising the backend turn timeout would silently reintroduce
 // #93911 — the client giving up before a valid typed settlement arrives.
 
+// The IN-repo client mirror always lives here.
 const relaySource = readFileSync(join(process.cwd(), 'src/plugins/hermes-bots/relay.ts'), 'utf8')
-const repoRoot = join(process.cwd(), '..', '..')
-const configDefaults = readFileSync(join(repoRoot, 'hermes_cli/config_defaults.py'), 'utf8')
-const relayPlumbing = readFileSync(join(repoRoot, 'tools/bot_relay.py'), 'utf8')
+
+// The BACKEND source the client mirrors. Upstream is a monorepo (the backend
+// is checked out next to the UI, so `join(cwd, '..', '..')` reaches it); a
+// UI-only fork has the backend INSTALLED separately, not checked out. Probe
+// monorepo → the well-known installed root → an explicit `HERMES_AGENT_ROOT`
+// override so the drift-guard works in both layouts, and fail with a
+// descriptive "backend not found" (instead of a bare ENOENT at import time)
+// when it genuinely can't be located. `HERMES_AGENT_ROOT` wins last so a CI
+// box pointing elsewhere is the escape hatch.
+function resolveBackendRoot(): string {
+  const candidates = [
+    join(process.cwd(), '..', '..'),
+    '/usr/local/lib/hermes-agent',
+    process.env.HERMES_AGENT_ROOT
+  ].filter((candidate): candidate is string => Boolean(candidate))
+
+  for (const root of candidates) {
+    if (existsSync(join(root, 'hermes_cli', 'config_defaults.py')) && existsSync(join(root, 'tools', 'bot_relay.py'))) {
+      return root
+    }
+  }
+
+  throw new Error(`hermes-agent backend source not found for the relay mirror; tried: ${candidates.join(', ')}`)
+}
+
+// Loaded in `beforeAll` (not at module scope) so a missing backend fails one
+// described test cleanly instead of breaking collection of the whole file.
+let configDefaults = ''
+let relayPlumbing = ''
+
+beforeAll(() => {
+  const root = resolveBackendRoot()
+
+  configDefaults = readFileSync(join(root, 'hermes_cli', 'config_defaults.py'), 'utf8')
+  relayPlumbing = readFileSync(join(root, 'tools', 'bot_relay.py'), 'utf8')
+})
 
 function tsConstant(name: string): number {
   const match = relaySource.match(new RegExp(`const ${name} = ([0-9_]+)`))
