@@ -1,6 +1,13 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import path from 'node:path'
+
+
+// Node builtins are externalized for browser compatibility under jsdom;
+// static/dynamic imports both get mangled. Pull the real module objects
+// from the Node VM via the `process` global, which vitest keeps.
+import { createRequire } from 'module'
+const req = createRequire(process.cwd() + '/')
+const { mkdtemp, readFile, rm, writeFile } = req('fs/promises')
+const { tmpdir } = req('os')
+const path = req('path')
 
 import { EditorView } from '@codemirror/view'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'

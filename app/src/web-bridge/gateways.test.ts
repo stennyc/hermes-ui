@@ -25,9 +25,9 @@ describe('classifyGatewayReach', () => {
     expect(classifyGatewayReach('http://sub.localhost:9300')).toBeNull()
   })
 
-  it('blocks a non-loopback gateway that is not whitelisted', () => {
-    expect(classifyGatewayReach('https://hermes.example.com')).toBe('cross-origin')
-    expect(classifyGatewayReach('http://203.0.113.10:9119')).toBe('cross-origin')
+  it('allows a non-loopback gateway that is not whitelisted (CORS configured on gateway side)', () => {
+    expect(classifyGatewayReach('https://hermes.example.com')).toBeNull()
+    expect(classifyGatewayReach('http://203.0.113.10:9119')).toBeNull()
   })
 
   it('allows a whitelisted gateway (folded through the dev proxy to same-origin)', () => {
@@ -36,8 +36,8 @@ describe('classifyGatewayReach', () => {
     expect(classifyGatewayReach('https://hermes.example.com')).toBeNull()
     expect(classifyGatewayReach('https://hermes.example.com/dashboard')).toBeNull()
     expect(classifyGatewayReach('http://203.0.113.10:9119')).toBeNull()
-    // A different port is a different origin and stays blocked.
-    expect(classifyGatewayReach('http://203.0.113.10:9200')).toBe('cross-origin')
+    // A different port is still allowed (CORS configured on gateway side).
+    expect(classifyGatewayReach('http://203.0.113.10:9200')).toBeNull()
   })
 })
 

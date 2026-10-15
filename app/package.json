@@ -15,9 +15,11 @@
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "fmt": "prettier --write 'src/**/*.{ts,tsx}' 'vite.config.ts'",
-    "test:ui": "vitest run --mode=test --environment jsdom",
+    "test:ui": "vitest run --project ui",
     "test:plugins": "node --test src/plugins/hermes-bots/tests/*.test.mjs",
-    "preview": "vite preview --port 4174"
+    "preview": "vite preview --port 4174",
+    "test": "vitest run",
+    "test:desktop:platforms": "vitest run --project electron"
   },
   "dependencies": {
     "@assistant-ui/core": "0.2.23",

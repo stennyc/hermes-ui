@@ -1,6 +1,7 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+// @vitest-environment node
 
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -19,7 +20,7 @@ import {
 // Without it, raising the backend turn timeout would silently reintroduce
 // #93911 — the client giving up before a valid typed settlement arrives.
 
-const repoRoot = join(process.cwd(), '..', '..')
+const repoRoot = process.env.HERMES_REPO_ROOT ?? join(__dirname, '..', '..', '..', '..')
 const configDefaults = readFileSync(join(repoRoot, 'hermes_cli/config_defaults.py'), 'utf8')
 const relayPlumbing = readFileSync(join(repoRoot, 'tools/bot_relay.py'), 'utf8')
 

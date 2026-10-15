@@ -1,4 +1,9 @@
+
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+// jsdom has no timers/promises module; real setImmediate is a one-tick delay,
+// equivalent to a resolved Promise for these microtask-flush assertions.
+const setImmediate = () => Promise.resolve()
+
 
 import type * as groupChat from './group-chat'
 import type * as groupRounds from './group-rounds'
@@ -1058,7 +1063,6 @@ describe('clarify and approvals (#90694)', () => {
     tick()
     await polled
     await view.disbandGroupChat('Core', [])
-    const { setImmediate } = await import('node:timers/promises')
     await setImmediate()
     room.chat.updateGroupChat('Core', current => ({
       ...current,
