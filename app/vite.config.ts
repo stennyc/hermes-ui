@@ -311,6 +311,33 @@ export default defineConfig({
     __HERMES_BUILD_ID__: JSON.stringify(String(Date.now()))
   },
   plugins: [
+    // driver.js v1.8's package.json exports map omits ./dist/driver.js.iife.js
+    // under the "browser" condition; rewrite the bare specifier to the absolute
+    // file path so Rolldown's resolver skips the package-exports check.
+    {
+      name: 'fix-driver-iife-exports',
+      enforce: 'pre',
+      resolveId(source: string) {
+        // Match the bare specifier and its ?raw query variant so the plugin
+        // rewrites before Rolldown's package-exports check runs.
+        const base = source.split('?')[0]
+        if (base === 'driver.js/dist/driver.js.iife.js') {
+          return path.resolve(__dirname, 'node_modules/driver.js/dist/driver.js.iife.js')
+        }
+        return null
+      },
+      // driver.js.iife.js is an IIFE script with no ESM exports; the preview
+      // tour imports it with ?raw and eval()s it at runtime. Expose the raw
+      // source as a default export so Rolldown's ESM transform accepts it.
+      load(id: string) {
+        if (id.endsWith('driver.js.iife.js')) {
+          const fs = require('node:fs')
+          const src = fs.readFileSync(id, 'utf8')
+          return `export default ${JSON.stringify(src)}`
+        }
+        return null
+      }
+    },
     // Dev only: the dynamic gateway proxy + injection of
     // window.__HERMES_GATEWAY_WHITELIST__ so the client knows which absolute
     // gateway origins fold through the same-origin proxy (see normalizeBase).
@@ -400,6 +427,10 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      // driver.js v1.8's exports map does not expose ./dist/driver.js.iife.js
+      // under the "browser" condition, but the preview tour imports it ?raw
+      // for runtime eval. Point the alias at the real file path.
+      'driver.js/dist/driver.js.iife.js': path.resolve(__dirname, 'node_modules/driver.js/dist/driver.js.iife.js'),
       '@': path.resolve(__dirname, './src'),
       '@hermes/plugin-sdk': path.resolve(__dirname, './src/sdk/index.ts'),
       '@hermes/shared': path.resolve(__dirname, '../shared/src')
