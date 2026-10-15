@@ -10,6 +10,7 @@ import { writeClipboardText } from '@/components/ui/copy-button'
 import { markRightPanePerf } from '@/debug/right-pane-events'
 import { triggerHaptic } from '@/lib/haptics'
 import { isComposerChord } from '@/lib/keybinds/chords'
+import { getWsTerminalBridge } from '@/lib/ws-terminal-bridge'
 import { $previewTarget } from '@/store/preview'
 import { useTheme } from '@/themes/context'
 
@@ -493,9 +494,18 @@ export function useTerminalSession({
   // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
     const host = hostRef.current
-    const terminalApi = window.hermesDesktop?.terminal
+    // Live shell source: the Electron main-process PTY bridge, or — in the
+    // web/Capacitor builds where it doesn't exist — the gateway WebSocket
+    // terminal bridge (T1 `/api/pty?shell=1`), which exposes the SAME
+    // 8-method surface. Desktop behaviour is untouched: Electron present
+    // takes exactly the old path.
+    const electronTerminalApi = window.hermesDesktop?.terminal
+    const terminalApi = electronTerminalApi ?? getWsTerminalBridge()
+    // The WS-bridge-only surface (degradation/recovery) — undefined on the
+    // Electron path where the main-process PTY bridge has no `onRecover`.
+    const wsBridge = electronTerminalApi ? null : getWsTerminalBridge()
 
-    if (!host || !terminalApi) {
+    if (!host) {
       setStatus('closed')
 
       return
@@ -848,12 +858,17 @@ export function useTerminalSession({
       return false
     })
 
-    const startSession = () =>
+    const startSession = () => {
+      // The directory THIS session dialed in: the live-shell source of truth
+      // when no host-side cwd probe exists (the remote WS bridge's `cwd()`
+      // degrades to it — the launch dir, never a throw).
+      const sessionCwd = initialRestoreCwdRef.current || cwd
+
       void terminalApi
         // Prefer the prior session's last cwd so a reopened tab lands where the
         // user last `cd`'d; the main side falls back to the launch cwd (then
         // home) if that dir no longer exists.
-        .start({ cols: term.cols, cwd: initialRestoreCwdRef.current || cwd, rows: term.rows })
+        .start({ cols: term.cols, cwd: sessionCwd, rows: term.rows })
         .then(async session => {
           if (disposed) {
             void terminalApi.dispose(session.id)
@@ -876,7 +891,22 @@ export function useTerminalSession({
               armedWrite(data)
               scheduleSnapshot()
             }),
-            terminalApi.onExit(session.id, () => {
+            terminalApi.onExit(session.id, exit => {
+              if (exit.reason) {
+                // Abnormal socket teardown (gateway drop, auth expiry, stall)
+                // — the WS bridge's bounded auto-redial is already running.
+                // Keep the tab like a live terminal with a dead connection:
+                // surface the stored notice and stop claiming we're open. The
+                // Electron bridge never sets `reason`, so desktop is
+                // byte-for-byte the old path.
+                if (!disposed && !appTearingDown) {
+                  setStatus('closed')
+                  term.write(`\r\n\x1b[33m${exit.reason}\x1b[0m\r\n`)
+                }
+
+                return
+              }
+
               // Shell exited (`exit` / Ctrl-D / crash) — drop the tab like a real
               // terminal. closeTerminal hides the pane when it's the last one.
               // Skip if we're tearing down (cleanup disposes the PTY) OR the app
@@ -886,6 +916,18 @@ export function useTerminalSession({
               // right before relaunch restores them.
               if (!disposed && !appTearingDown) {
                 closeTerminal(id)
+              }
+            }),
+            // WS-bridge recovery: the bridge's bounded auto-redial (or a later
+            // explicit `attach`) re-landed after an abnormal close. The T1
+            // registry replays the session's recent buffer into the new socket,
+            // so clear the xterm buffer first — the replay then reconstructs
+            // the screen and the notice is dropped. The Electron bridge has no
+            // `onRecover`, so this line is inert on desktop.
+            (wsBridge?.onRecover ?? (() => () => {}))(session.id, () => {
+              if (!disposed && !appTearingDown) {
+                term.clear()
+                setStatus('open')
               }
             })
           )
@@ -906,6 +948,7 @@ export function useTerminalSession({
           setStatus('closed')
           term.write(`Terminal failed to start: ${error instanceof Error ? error.message : String(error)}\r\n`)
         })
+    }
 
     // Open + fit + start only once webfonts settle. Fitting with fallback metrics
     // picks the wrong row count, the shell boots at that size, then the real font

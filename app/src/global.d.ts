@@ -634,6 +634,11 @@ export interface HermesTerminalSession {
 export interface HermesTerminalExit {
   code: number | null
   signal: string | null
+  /** Abnormal socket teardown — NOT the shell's own `exit` (which reports
+   *  `{ code: 0, signal: null }`): a user-visible degradation notice so the
+   *  renderer can keep the tab and show what happened. The Electron
+   *  main-process PTY bridge never sets this; the WS terminal bridge does. */
+  reason?: string
 }
 
 export interface DesktopVersionInfo {
