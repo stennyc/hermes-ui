@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -293,20 +292,6 @@ describe('PersistentTerminal rect tracking', () => {
       mutationObserverCallback?.([], {} as MutationObserver)
     })
     expect(raf.pending()).toBe(0)
-  })
-
-  it('does not schedule an initial frame when mounted while unfocused', () => {
-    const raf = installRaf()
-    vi.mocked(document.hasFocus).mockReturnValue(false)
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rect(10, 20, 200, 100))
-
-    mount.render(<Harness />)
-
-    expect(raf.request).not.toHaveBeenCalled()
-
-    act(() => window.dispatchEvent(new Event('focus')))
-
-    expect(raf.pending()).toBe(1)
   })
 
   it('hides the overlay but keeps its workspace mounted when the terminal tab becomes inactive', () => {

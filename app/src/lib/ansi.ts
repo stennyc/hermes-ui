@@ -173,8 +173,3 @@ export function hasAnsiCodes(input: string): boolean {
   // eslint-disable-next-line no-control-regex
   return /\x1b\[/.test(input)
 }
-
-/** Strip ANSI escape sequences, returning plain text. */
-export function stripAnsi(s: string): string {
-  return s.replace(/\x1b\[[0-9;]*m/g, '').replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
-}

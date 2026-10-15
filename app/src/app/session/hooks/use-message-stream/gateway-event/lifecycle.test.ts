@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -20,7 +19,8 @@ function setupReadyContext(fromActiveSource: boolean): GatewayEventContext {
   const payload = {
     error: '',
     finished_at: 1_700_000_100,
-    free_tier: true,
+    free_tier_account: true,
+    free_tier_route: true,
     has_identity: true,
     inference_provider: 'nous',
     other_providers: false,

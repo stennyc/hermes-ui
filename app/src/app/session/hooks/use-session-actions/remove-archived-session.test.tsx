@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 // Regression: deleting a session from the Archived filter view left a ghost
 // row. Archived rows live in $archivedSessions (their own capped store —
 // they're excluded from $sessions by design), and removeSession only pruned
@@ -70,6 +69,7 @@ function Harness({ onReady }: { onReady: (handle: Handle) => void }) {
     navigate: vi.fn() as never,
     requestGateway: vi.fn().mockResolvedValue(undefined),
     resetViewSync: vi.fn(),
+    routedSessionId: null,
     runtimeIdByStoredSessionIdRef: ref(new Map<string, string>()),
     selectedStoredSessionId: null,
     selectedStoredSessionIdRef: ref<string | null>(null),

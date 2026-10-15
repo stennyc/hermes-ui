@@ -29,7 +29,7 @@ import type {
   HermesConnection
 } from '@/global'
 
-import type { HermesNotification } from '@/electron/notification-types'
+import type { HermesNotification } from '../../electron/notification-types'
 
 import {
   activeUpstreamOrigin,
@@ -58,6 +58,10 @@ const TOKEN_STORAGE_KEY = 'hermes-web.session-token'
 
 const noop = (): void => {}
 const unsubscribed = (): (() => void) => noop
+// Web bridge: quick-entry submission is unavailable (inert Electron surface);
+// resolve the success shape instead of rejecting so callers awaiting the
+// Promise don't crash on the web build.
+const noopSubmit = async (): Promise<import('../store/quick-entry').QuickEntrySubmitResult> => ({ ok: true })
 
 /**
  * The bridge always operates on the ACTIVE gateway (see `./gateways`). This is
@@ -674,7 +678,6 @@ export function createWebBridge(): Window['hermesDesktop'] {
   const bridge: WebBridge = {
     getConnection: async profile => connection(profile),
     revalidateConnection: async () => ({ ok: true, rebuilt: false }),
-    touchBackend: async () => ({ ok: true }),
     getGatewayWsUrl: async () => {
       // One origin for both the ticket mint and the socket connect, so the dev
       // proxy routes them to the same gateway (a mismatch would 4403).
@@ -717,8 +720,6 @@ export function createWebBridge(): Window['hermesDesktop'] {
       test: async () => ({ ok: false }),
     },
     getProfileRoutes: async () => [],
-    getPoolLimits: async () => ({ maxBackends: 5, idleMs: 300000 }),
-    setPoolLimits: async () => ({ ok: true, limits: { maxBackends: 5, idleMs: 300000 } }),
     openSessionInTerminal: async () => ({ ok: false }),
     openWindow: async () => ({ ok: false }),
     openBrowserWindow: async () => ({ ok: false }),
@@ -738,12 +739,14 @@ export function createWebBridge(): Window['hermesDesktop'] {
     quickEntry: {
       getSettings: async () => ({ enabled: false, shortcut: '', error: null, registered: false }),
       setSettings: async () => ({ enabled: false, shortcut: '', error: null, registered: false }),
-      submit: noop,
+      submit: noopSubmit,
+      ackSubmit: noop,
       dismiss: noop,
       pushState: noop,
       onState: unsubscribed,
       onSubmit: unsubscribed,
-      onShown: unsubscribed
+      onShown: unsubscribed,
+      onLateResult: unsubscribed
     },
     getBootProgress: async () => readyBootProgress(),
     getConnectionConfig: async () => toConnectionConfig(loadStoredConnection()),
@@ -945,7 +948,8 @@ export function createWebBridge(): Window['hermesDesktop'] {
       startedAt: null,
       completedAt: null,
       setupChoice: null,
-      unsupportedPlatform: null
+      unsupportedPlatform: null,
+      bundled: false
     }),
     resetBootstrap: async () => ({ ok: true }),
     repairBootstrap: async () => ({ ok: true }),
@@ -959,11 +963,21 @@ export function createWebBridge(): Window['hermesDesktop'] {
       hermesRoot: ''
     }),
     getRemoteDisplayReason: async () => null,
+    getSyncStatus: async () => null,
+    windowControls: {
+      custom: false,
+      minimize: noop,
+      toggleMaximize: noop,
+      close: noop
+    },
+    updateHold: {
+      recheck: async () => ({ ok: false }),
+      quit: async () => ({ ok: false }),
+      startAnyway: async () => ({ ok: false })
+    },
     updates: {
       check: async () => ({ supported: false }),
       apply: async () => ({ ok: false }),
-      getBranch: async () => ({ branch: '' }),
-      setBranch: async () => ({ branch: '' }),
       onProgress: unsubscribed
     },
     uninstall: {
@@ -972,7 +986,8 @@ export function createWebBridge(): Window['hermesDesktop'] {
       },
       run: async () => {
         throw new Error('uninstall is unavailable in the web app')
-      }
+      },
+      openAppsSettings: async () => {}
     },
     themes: {
       fetchMarketplace: async () => {

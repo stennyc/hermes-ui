@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 
 import { AGENT_MESSAGE_RE } from './user-message'
@@ -22,6 +21,16 @@ describe('agent message detection', () => {
     expect(m?.[1]?.trim()).toBe('Eats Tests')
     expect(m?.[2]).toBe('mr-tester')
     expect(m?.[4]).toBe('run them all')
+  })
+
+  it('recognizes a relayed sender re-stamped @handle@connection, keeping the bare handle for the avatar', () => {
+    // The receiving gateway re-stamps a relayed "@hermes" as "@hermes@<connection>"
+    // (#103731) — still an agent notice, and the avatar resolves by profile handle.
+    const m = AGENT_MESSAGE_RE.exec('Message from 🤖 hermes (@hermes@Cloud-1): status?')
+
+    expect(m?.[1]?.trim()).toBe('hermes')
+    expect(m?.[2]).toBe('hermes')
+    expect(m?.[4]).toBe('status?')
   })
 
   it('matches without the robot emoji', () => {

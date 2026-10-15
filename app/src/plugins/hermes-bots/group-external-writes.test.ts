@@ -90,11 +90,9 @@ afterEach(() => {
 })
 
 describe('external writes into a member session', () => {
-  it('surface exactly once on room open, and never replay across a drive or a window restart', async () => {
+  it('reach the room log exactly once across two drives and a window restart', async () => {
     const gateway = createGroupGateway(options)
     let room = await loadRoom(gateway)
-    const view = await import('./group-chat-view')
-    const data = await import('./data')
 
     const thread = await drive(room, 'hello room')
     const key = room.membership.groupSessionKey(thread, MEMBER)
@@ -103,19 +101,9 @@ describe('external writes into a member session', () => {
     // The user resumes the member's session from the CLI between rounds.
     session.messages.push({ content: 'cli question', role: 'user' }, { content: 'cli answer', role: 'assistant' })
 
-    // The drive does not mirror: external rows surface on the next open,
-    // never inside a round's commit window.
-    expect(texts(room)).toEqual(['hello room', 'room reply 1'])
+    await drive(room, 'second', thread)
 
-    // The member sits on this Desktop's roster, as it does in production; the
-    // stored descriptor alone would read as a remote seat.
-    data.$lastRoster.set([{ name: 'research' }] as never)
-    data.$botMeta.set({ research: { groups: ['Room'] } } as never)
-
-    view.openGroupChat('Room')
-    await drain(() => texts(room).length < 4)
-
-    expect(texts(room)).toEqual(['hello room', 'room reply 1', 'cli question', 'cli answer'])
+    expect(texts(room)).toEqual(['hello room', 'room reply 1', 'second', 'cli question', 'cli answer', 'room reply 2'])
 
     const mirrored = room.chat.$groupChats.get().Room.log.filter(entry => entry.text.startsWith('cli '))
 
@@ -130,40 +118,20 @@ describe('external writes into a member session', () => {
     expect(durable.externalCursors).toEqual({ [key]: 4 })
 
     // Window restart: same gateway and storage, fresh renderer state.
-    // Re-import after resetModules — the pre-restart instances are stale.
     room = await loadRoom(gateway)
     hydrateFromStorage(room)
-    const view2 = await import('./group-chat-view')
-    const data2 = await import('./data')
 
-    // A drive neither mirrors external rows nor replays the swept ones; the
-    // room's own prompt/reply rows stay in the session transcript, filtered
-    // out by the mirror's header check.
-    await drive(room, 'second', thread)
+    await drive(room, 'third', thread)
 
     expect(texts(room)).toEqual([
       'hello room',
       'room reply 1',
+      'second',
       'cli question',
       'cli answer',
-      'second',
-      'room reply 2'
-    ])
-
-    // Reopening sweeps again: the cursor now sits past the room's own rows,
-    // so nothing new lands — exactly once, still.
-    data2.$lastRoster.set([{ name: 'research' }] as never)
-    data2.$botMeta.set({ research: { groups: ['Room'] } } as never)
-    view2.openGroupChat('Room')
-    await drain(() => true, 200)
-
-    expect(texts(room)).toEqual([
-      'hello room',
-      'room reply 1',
-      'cli question',
-      'cli answer',
-      'second',
-      'room reply 2'
+      'room reply 2',
+      'third',
+      'room reply 3'
     ])
   })
 

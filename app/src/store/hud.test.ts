@@ -1,21 +1,19 @@
-// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { $activeGatewayProfile } from '@/store/profile'
 import { $sessions } from '@/store/session'
 import type { SessionInfo } from '@/types/hermes'
 
-import { $hudActive, $hudSession, openHud, resetHudLayout } from './hud'
+import { $hudActive, $hudSession, openHud } from './hud'
 
 const desktopWindow = window as unknown as { hermesDesktop?: Window['hermesDesktop'] }
 const initialHermesDesktop = desktopWindow.hermesDesktop
 
 const open = vi.fn().mockResolvedValue({ ok: true })
-const resetLayout = vi.fn().mockResolvedValue({ ok: true })
 
 function installBridge() {
   desktopWindow.hermesDesktop = {
-    hud: { open, resetLayout }
+    hud: { open }
   } as unknown as Window['hermesDesktop']
 }
 
@@ -25,7 +23,6 @@ function session(overrides: Partial<SessionInfo>): SessionInfo {
 
 beforeEach(() => {
   open.mockClear()
-  resetLayout.mockClear()
   installBridge()
   $hudActive.set(false)
   $hudSession.set(null)
@@ -39,14 +36,6 @@ afterEach(() => {
   } else {
     delete desktopWindow.hermesDesktop
   }
-})
-
-describe('resetHudLayout', () => {
-  it('uses the native HUD recovery capability', () => {
-    resetHudLayout()
-
-    expect(resetLayout).toHaveBeenCalledOnce()
-  })
 })
 
 describe('openHud profile targeting (#82285)', () => {
@@ -74,12 +63,6 @@ describe('openHud profile targeting (#82285)', () => {
     openHud()
 
     expect(open).toHaveBeenCalledWith({ sessionId: null, profile: 'research' })
-  })
-
-  it('normalizes to default for single-profile users', () => {
-    openHud()
-
-    expect(open).toHaveBeenCalledWith({ sessionId: null, profile: 'default' })
   })
 
   it('uses the active profile when the target session is not in the cache', () => {

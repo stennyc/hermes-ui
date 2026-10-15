@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 
 import { downloadFilename, imageFilename } from './use-image-download'

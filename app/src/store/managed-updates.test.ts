@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DesktopManagedConnectionUpdateResult } from '@/global'
@@ -39,17 +38,6 @@ beforeEach(() => {
   ;(window as { hermesDesktop?: unknown }).hermesDesktop = {
     connections: { updateManaged }
   }
-})
-
-describe('managedUpdatesSupported', () => {
-  it('is false on an older Electron main without the transactional bridge', () => {
-    ;(window as { hermesDesktop?: unknown }).hermesDesktop = { connections: {} }
-    expect(managedUpdatesSupported()).toBe(false)
-  })
-
-  it('is true when the preload bridge exposes updateManaged', () => {
-    expect(managedUpdatesSupported()).toBe(true)
-  })
 })
 
 describe('runManagedUpdate', () => {

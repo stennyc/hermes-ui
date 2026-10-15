@@ -43,6 +43,7 @@ export function useRemoteProbe({ enabled, url, revision, onResult, onReset }: Re
   acceptProbeRef.current = acceptProbe
 
   // The debounce depends on the target, not on host render callbacks.
+  // eslint-disable-next-line no-restricted-syntax -- request generations, not a reactive value mirror
   useEffect(() => {
     const seq = ++targetSeq.current
     let timer: number | undefined

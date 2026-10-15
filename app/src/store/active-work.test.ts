@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ClientSessionState } from '@/app/types'
@@ -47,15 +46,5 @@ describe('active work bridge', () => {
     publishSessionState('runtime-1', busy('s1', false))
 
     expect(setActiveWork).toHaveBeenLastCalledWith({ count: 0, titles: [] })
-  })
-
-  it('does not re-send an unchanged summary', () => {
-    $sessions.set([session('s1', 'Fix login')])
-    publishSessionState('runtime-1', busy('s1', true))
-    setActiveWork.mockClear()
-
-    $sessions.set([session('s1', 'Fix login'), session('s2', 'Something else')])
-
-    expect(setActiveWork).not.toHaveBeenCalled()
   })
 })

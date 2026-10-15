@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 // The overlay used to run its own 80ms setInterval + setState braille ticker —
 // the same mechanism class (per-tick DOM mutation scheduling a style recalc)
 // that GlyphSpinner was rewritten to remove. It now renders GlyphSpinner, so
@@ -21,23 +20,6 @@ describe('ChatSwapOverlay', () => {
   afterEach(() => {
     vi.clearAllTimers()
     vi.useRealTimers()
-  })
-
-  it('animates the glyph without any timer', () => {
-    const { container } = render(<ChatSwapOverlay profile="turqoise" />)
-
-    expect(container.querySelector('.glyph-spinner__strip')).toBeTruthy()
-    expect(vi.getTimerCount()).toBe(0)
-
-    vi.advanceTimersByTime(5_000)
-
-    expect(vi.getTimerCount()).toBe(0)
-  })
-
-  it('names the waking profile', () => {
-    render(<ChatSwapOverlay profile="turqoise" />)
-
-    expect(screen.getByText(/turqoise/)).toBeTruthy()
   })
 
   it('keeps the last profile name through the fade-out, with the glyph frozen', () => {

@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 
@@ -19,6 +18,8 @@ afterEach(() => {
   cleanup()
   vi.useRealTimers()
   $queuedPromptsBySession.set({})
+  // Queue mutations build on the persisted map, not the atom.
+  window.localStorage.removeItem('hermes.desktop.composerQueue.v1')
   $parkedQueueSessions.set({})
   $sessions.set([])
   setSessionsLoading(true)

@@ -9,17 +9,13 @@
  * routine title or instruction containing `$(…)` executed on the scheduler's
  * machine; `isLegacyDelegatedRoutine` is how those persisted jobs are still
  * recognized and paused.
- *
- * The logic under test lives in the pure `./cron-prompt-logic` module (no UI,
- * no `window`), so this file runs in the default `node` environment and can
- * use `node:child_process` for the shell-level assertion.
  */
 
 import { spawnSync } from 'node:child_process'
 
 import { describe, expect, it } from 'vitest'
 
-import { isLegacyDelegatedRoutine, normalizedProfileName, routineInputError, routinePrompt } from './cron-prompt-logic'
+import { isLegacyDelegatedRoutine, normalizedProfileName, routineInputError, routinePrompt } from './cron'
 
 /** Run the delegation command under a `hermes` stub that prints its argv, so
  *  the assertion is what the SHELL passed — not what the string looks like. */

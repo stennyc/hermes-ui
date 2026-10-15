@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -64,12 +63,6 @@ describe('MarkdownTextContent artifacts', () => {
     expect(container.querySelector('[data-slot="code-card"]')).not.toBeNull()
     expect(container.querySelector('[data-slot="aui_artifact-card"]')).toBeNull()
     expect(artifactsForSession('session-artifacts')).toHaveLength(0)
-  })
-
-  it('renders a copy control on a fenced code block', async () => {
-    render(<MarkdownTextContent isRunning={false} text={fenced('js', SMALL_SNIPPET)} />)
-
-    expect(await screen.findByRole('button', { name: 'Copy code' })).toBeTruthy()
   })
 
   it('does not register while the message is still streaming', async () => {

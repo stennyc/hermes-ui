@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 /**
  * The `chat.empty` slot mounts EVERY contributor, not just the first.
  *
@@ -43,12 +42,6 @@ describe('an empty transcript asks every contributor', () => {
     contribute('a', () => null)
     contribute('b', () => null)
 
-    const { container } = render(<ChatEmptySlot sessionId="s-1" />)
-
-    expect(container.textContent).toBe('')
-  })
-
-  it('renders nothing when nobody contributes at all', () => {
     const { container } = render(<ChatEmptySlot sessionId="s-1" />)
 
     expect(container.textContent).toBe('')

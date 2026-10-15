@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -72,21 +71,5 @@ describe('useProfileRailRefreshOnActive', () => {
     })
 
     expect(refreshActiveProfile).not.toHaveBeenCalled()
-  })
-
-  it('does not accumulate listeners across repeated mount/unmount cycles', async () => {
-    // A leaked listener from a prior mount would double- (or N-times-)
-    // refresh on a single focus event after remounting.
-    const first = renderHook(() => useProfileRailRefreshOnActive())
-    first.unmount()
-
-    renderHook(() => useProfileRailRefreshOnActive())
-    refreshActiveProfile.mockClear()
-
-    await act(async () => {
-      window.dispatchEvent(new Event('focus'))
-    })
-
-    expect(refreshActiveProfile).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -78,12 +77,15 @@ describe('confirm()', () => {
       busyLabel: 'Installing…',
       doneLabel: 'Installed',
       details: [{ label: 'Source', value: 'official/productivity/pdf' }],
-      onConfirm: () => new Promise<void>((resolve, reject) => {
-        attempts += 1
-        finish = resolve
-        fail = reject
-      })
-    }).then(value => { answer = value })
+      onConfirm: () =>
+        new Promise<void>((resolve, reject) => {
+          attempts += 1
+          finish = resolve
+          fail = reject
+        })
+    }).then(value => {
+      answer = value
+    })
 
     expect(await screen.findByText('official/productivity/pdf')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Install' }))

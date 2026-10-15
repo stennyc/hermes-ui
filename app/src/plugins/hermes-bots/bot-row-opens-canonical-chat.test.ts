@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 /**
  * A bot row click lands on the bot's canonical Bot Chat — the session the row
  * previews (`canonical_session`, resolved by name on every roster poll).
@@ -12,6 +11,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type * as CanonicalChat from './canonical-chat'
 import type { RosterRow } from './types'
 
 const { openBotCanonicalChat, prepareBotSource } = vi.hoisted(() => ({
@@ -19,9 +19,10 @@ const { openBotCanonicalChat, prepareBotSource } = vi.hoisted(() => ({
   prepareBotSource: vi.fn()
 }))
 
-vi.mock('./canonical-chat', () => ({
+vi.mock('./canonical-chat', async () => ({
   CANONICAL_CHAT_TITLE: 'Bot Chat',
   ensureBotMetadata: vi.fn(async () => ({})),
+  isStaleBotChatTile: (await vi.importActual<typeof CanonicalChat>('./canonical-chat')).isStaleBotChatTile,
   notifyBotOpenFailure: vi.fn(),
   openBotCanonicalChat,
   prepareBotSource,
@@ -88,7 +89,12 @@ describe('a row click lands on the canonical chat, never a remembered side tab',
     try {
       await expect(openRosterBot(canonicalBot)).resolves.toBe(true)
 
-      expect(openBotCanonicalChat).toHaveBeenCalledWith(canonicalBot, expect.any(Function))
+      expect(openBotCanonicalChat).toHaveBeenCalledWith(
+        canonicalBot,
+        // A fronting refresh re-pulls the transcript without navigating —
+        // background: true threads refreshInPlace (issue 121874).
+        { background: true, openingStillCurrent: expect.any(Function) }
+      )
     } finally {
       busy.mockRestore()
       $selectedStoredSessionId.set(null)
@@ -103,7 +109,7 @@ describe('a row click lands on the canonical chat, never a remembered side tab',
 
     await expect(openRosterBot(canonicalBot)).resolves.toBe(true)
 
-    expect(openBotCanonicalChat).toHaveBeenCalledWith(canonicalBot, expect.any(Function))
+    expect(openBotCanonicalChat).toHaveBeenCalledWith(canonicalBot, { openingStillCurrent: expect.any(Function) })
     expect($openBotChat.get()?.openedSessionId).toBe('bot-chat-tip')
   })
 

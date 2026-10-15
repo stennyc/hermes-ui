@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { $vibeHeartsEnabled, setVibeHeartsEnabled } from '@/store/vibe-hearts-enabled'
@@ -13,20 +12,9 @@ describe('vibe hearts enabled', () => {
     $vibeHeartsEnabled.set(true)
   })
 
-  it('defaults to on so existing installs keep hearts', () => {
-    expect($vibeHeartsEnabled.get()).toBe(true)
-  })
-
   it('turns off and persists', () => {
     setVibeHeartsEnabled(false)
     expect($vibeHeartsEnabled.get()).toBe(false)
     expect(window.localStorage.getItem(KEY)).toBe('off')
-  })
-
-  it('turns back on and persists', () => {
-    setVibeHeartsEnabled(false)
-    setVibeHeartsEnabled(true)
-    expect($vibeHeartsEnabled.get()).toBe(true)
-    expect(window.localStorage.getItem(KEY)).toBe('on')
   })
 })

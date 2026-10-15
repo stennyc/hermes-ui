@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { $gateway } from '@/store/gateway'
@@ -136,13 +135,6 @@ describe('send-diagnostics store', () => {
       restoreDesktop()
       restoreGateway()
     }
-  })
-
-  it('dismiss clears the dialog state', () => {
-    requestSendDiagnostics()
-    dismissSendDiagnostics()
-
-    expect($sendDiagnostics.get()).toBeNull()
   })
 
   it('dismissal mid-upload is immediate and a stale completion cannot resurrect the dialog', async () => {

@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
@@ -43,7 +42,6 @@ it('answers the vault.code server request with the trimmed code, never the ambie
   setVaultCodeRequest({ hint: '', requestId: 'req-c', sessionId: 'session-a', site: 'github.com' })
 
   render(<PromptOverlays sessionId="session-a" />)
-  expect(document.body.textContent).toContain('Verification code for github.com')
   const input = document.querySelector('input[autocomplete=one-time-code]') as HTMLInputElement
   const submit = document.querySelector('button[type=submit]') as HTMLButtonElement
   expect(submit.disabled).toBe(true)

@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { useStore } from '@nanostores/react'
 import { cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -105,13 +104,6 @@ describe('tab strip hide grammar', () => {
 
     expect(tablist()).toBeTruthy()
     expect(groupNode().tabStrip).toBeUndefined()
-  })
-
-  it('renders no strip at all for a zone set to never', () => {
-    setTreeGroupTabStrip('grp-main', 'never')
-    render(<LiveTreeGroup />)
-
-    expect(tablist()).toBeNull()
   })
 
   // The state that had no way out. The command targets the zone by

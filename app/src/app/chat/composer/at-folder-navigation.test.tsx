@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import type { Unstable_TriggerItem } from '@assistant-ui/core'
 import { act, renderHook } from '@testing-library/react'
 import { createRef } from 'react'

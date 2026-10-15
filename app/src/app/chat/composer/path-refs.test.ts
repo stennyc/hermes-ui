@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import type { KeyboardEvent } from 'react'
 import { describe, expect, it } from 'vitest'
 

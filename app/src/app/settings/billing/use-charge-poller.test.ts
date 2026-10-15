@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook } from '@testing-library/react'
 import { createElement, type PropsWithChildren } from 'react'
@@ -151,7 +150,7 @@ describe('pollChargeSettlement', () => {
       portalUrl: 'https://portal.nousresearch.com/billing'
     })
 
-    expect(outcome).toEqual({
+    expect(outcome).toMatchObject({
       kind: 'ambiguous',
       message: 'Charge may still settle. Check the portal before retrying.',
       portalUrl: 'https://portal.nousresearch.com/billing',

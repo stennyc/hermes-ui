@@ -1,5 +1,4 @@
-// @vitest-environment jsdom
-import { cleanup, render } from '@testing-library/react'
+import { cleanup, render, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 
@@ -22,6 +21,7 @@ vi.mock('@hermes/plugin-sdk', async () => {
     cn: (...values: unknown[]) => values.filter(Boolean).join(' '),
     Codicon: () => null,
     CopyButton: () => null,
+    ToggleRow: () => null,
     ConfirmDialog: () => null,
     Dialog: () => null,
     DialogContent: () => null,
@@ -59,6 +59,7 @@ it('keeps every public member reply readable in room arrival order across interl
 
   $groupChats.set({ Room: { log, watermarks: {}, sessions: {} } })
   const { container } = render(<GroupChatWorkspace group="Room" members={[]} />)
+  await waitFor(() => expect(container.textContent).toContain('Build request'))
   const text = container.textContent || ''
   let previous = -1
 

@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { InertResizeObserver, stubDomStorage, stubMenuDomApis } from './test/jsdom'
+import { InertResizeObserver, stubMenuDomApis } from './test/jsdom'
 
 // Browser-API floor for every jsdom suite: jsdom implements no layout, so
 // Radix & co. call these unconditionally on mount and throw without stand-ins.
@@ -47,5 +47,19 @@ if (typeof Element !== 'undefined') {
 // globalThis and window. Guarded on `window` so node-environment suites —
 // which have no jsdom window and never need storage — are untouched.
 if (typeof window !== 'undefined') {
-  stubDomStorage()
+  class InertStorage {
+    private _map = new Map<string, string>()
+    get length() { return this._map.size }
+    key(i: number) { return [...this._map.keys()][i] ?? null }
+    getItem(k: string) { return this._map.has(k) ? this._map.get(k)! : null }
+    setItem(k: string, v: string) { this._map.set(k, String(v)) }
+    removeItem(k: string) { this._map.delete(k) }
+    clear() { this._map.clear() }
+  }
+  if (!(globalThis as any).localStorage) {
+    Object.defineProperty(globalThis, 'localStorage', { value: new InertStorage() })
+  }
+  if (!(globalThis as any).sessionStorage) {
+    Object.defineProperty(globalThis, 'sessionStorage', { value: new InertStorage() })
+  }
 }

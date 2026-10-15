@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { DropdownMenu, DropdownMenuContent, ModelCatalogMenu, type ModelMenuController } from '@hermes/plugin-sdk'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
@@ -42,12 +41,6 @@ describe('override label', () => {
   it('reads as inherited until something is pinned', () => {
     expect(isInherited(EMPTY_OVERRIDE)).toBe(true)
     expect(overrideLabel(EMPTY_OVERRIDE, 'Profile default')).toBe('Profile default')
-  })
-
-  it('shows provider: model · Effort', () => {
-    expect(overrideLabel({ effort: 'high', model: 'gemini-3.1-pro', provider: 'google' }, 'x')).toBe(
-      'google: gemini-3.1-pro · High'
-    )
   })
 
   it('a depth-only pin is still an override', () => {

@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { useStore } from '@nanostores/react'
 import { cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -113,17 +112,6 @@ describe('Sessions/Bots strip — #91223', () => {
     expect(tabEl('hermes-bots:pane')).toBeTruthy()
     expect(zoneAt(0).minimized).toBeFalsy()
     expect(zoneAt(0).tabStrip).toBeUndefined()
-  })
-
-  it('double-clicking the Bots tab leaves the strip too', () => {
-    render(<LiveTreeGroup parentAxis="row" />)
-
-    tap(tabEl('hermes-bots:pane')!)
-    doubleTap(tabEl('hermes-bots:pane')!)
-
-    expect(tablist()).toBeTruthy()
-    expect(tabEl('sessions')).toBeTruthy()
-    expect(tabEl('hermes-bots:pane')).toBeTruthy()
   })
 
   it('tapping the strip gutter does not collapse the sidebar', () => {

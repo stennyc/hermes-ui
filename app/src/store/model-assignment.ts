@@ -44,20 +44,12 @@ export async function setMainModelAssignment(
   scopeProfile?: ProfileScope,
   options?: { skipConfirmPrompt?: boolean }
 ): Promise<ModelAssignmentResponse> {
-  // Web adaptation: the fork's @/hermes `setModelAssignment(body, profile?)`
-  // takes a profile STRING and routes through profileScoped(); it cannot dial a
-  // specific connection the way the desktop's capabilityScoped() can. A
-  // connection-scoped ProfileScope object therefore collapses to its profile
-  // name (or null). Keeps the legacy one-arg call shape when no scope override.
-  const profile =
-    typeof scopeProfile === 'string' ? scopeProfile : (scopeProfile?.profile ?? null)
-
   // Only pass the extra arg when a scope override exists, so unscoped callers
   // keep the exact legacy call shape.
   const assign = (body: Omit<ModelAssignmentRequest, 'scope'>) =>
-    profile == null
+    scopeProfile == null
       ? setModelAssignment({ ...body, scope: 'main' })
-      : setModelAssignment({ ...body, scope: 'main' }, profile)
+      : setModelAssignment({ ...body, scope: 'main' }, scopeProfile)
 
   let result = await assign(request)
 

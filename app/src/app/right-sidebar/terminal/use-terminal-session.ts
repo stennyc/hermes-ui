@@ -815,7 +815,23 @@ export function useTerminalSession({
           term.focus()
           term.paste(text)
         },
-        selectAll: () => term.selectAll()
+        reload: () => {
+          hasSessionActivityRef.current = true
+          const sessionId = sessionIdRef.current
+          if (sessionId) {
+            void terminalApi.write(sessionId, '\x12')
+          }
+        },
+        selectAll: () => term.selectAll(),
+        wordErase: () => {
+          hasSessionActivityRef.current = true
+          const sessionId = sessionIdRef.current
+          if (!sessionId) {
+            return false
+          }
+          void terminalApi.write(sessionId, '\x17')
+          return true
+        }
       })
     )
 

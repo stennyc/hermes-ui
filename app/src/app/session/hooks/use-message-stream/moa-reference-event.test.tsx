@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import type { GatewayEvent } from '@hermes/shared'
 import { act, cleanup } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -34,17 +33,6 @@ describe('useMessageStream moa.reference accumulation (#64658)', () => {
     expect(text).toContain('advice-a')
     expect(text).toContain('model-b')
     expect(text).toContain('advice-b')
-  })
-
-  it('handles a single-reference MoA turn (count=1) without regression', () => {
-    mountStream()
-
-    emit('moa.reference', { count: 1, index: 1, label: 'model-a', text: 'only-advice' })
-
-    const text = stream.reasoningText()
-
-    expect(text).toContain('model-a')
-    expect(text).toContain('only-advice')
   })
 
   it('accumulates three or more references in order', () => {

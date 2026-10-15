@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 /**
  * Deleting a bot deletes its Hermes profile, then everything plugin-local
  * that would otherwise leave stale appearance/unread data behind.

@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { render } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -68,15 +67,6 @@ describe('Thread messageComponents identity across session switches', () => {
     expect(lastComponents).toBe(first)
 
     rerender(<Thread sessionId="session-c" />)
-
-    expect(lastComponents).toBe(first)
-  })
-
-  it('keeps the map stable across a plain parent re-render', () => {
-    const { rerender } = render(<Thread sessionId="session-a" />)
-    const first = lastComponents
-
-    rerender(<Thread sessionId="session-a" />)
 
     expect(lastComponents).toBe(first)
   })

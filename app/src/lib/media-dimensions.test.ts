@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { expect, it, vi } from 'vitest'
 
 import type { HermesConnection } from '@/global'

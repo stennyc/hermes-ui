@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import type { ILink, Terminal as TerminalType } from '@xterm/xterm'
 import { Terminal } from '@xterm/xterm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'

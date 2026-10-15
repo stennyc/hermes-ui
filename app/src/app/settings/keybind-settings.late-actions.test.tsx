@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 /**
  * A keybind action contributed AFTER the settings tab mounts must appear in
  * the map. Same class as the late plugin-route bug (#109063): the component

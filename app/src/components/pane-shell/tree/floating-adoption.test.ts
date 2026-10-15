@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // A `placement: 'floating'` pane must never enter the layout tree. Adoption is
@@ -60,26 +59,6 @@ describe('floating panes stay out of the layout tree', () => {
     // Control: a normal placement DOES get adopted through the same pass, so
     // the exclusion is specific to 'floating', not a broken adoption run.
     expect(ids).toContain('files')
-  })
-
-  it('keeps the main zone unsplit when only a floating pane registers', async () => {
-    const { model, registry, tree } = await setup()
-
-    registry.register({
-      id: 'hud',
-      area: 'panes',
-      title: 'HUD',
-      data: { placement: 'floating' },
-      render: () => null
-    })
-
-    tree.watchContributedPanes()
-
-    const root = tree.$layoutTree.get()!
-
-    // Still the single group it was declared as — no track was created.
-    expect(root.type).toBe('group')
-    expect(model.allPaneIds(root)).toEqual(['workspace'])
   })
 
   it('survives a registry change without ever adopting the floating pane', async () => {

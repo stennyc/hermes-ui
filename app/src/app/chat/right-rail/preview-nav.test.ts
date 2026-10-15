@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { commandFocusedPreview, PREVIEW_BROWSER_ATTR, registerPreviewNav } from './preview-nav'
@@ -24,6 +23,17 @@ afterEach(() => {
 // inside the guest page never reaches this renderer at all — main handles that
 // against the focused webContents (see `commandFocusedGuest` in main.ts).
 describe('commandFocusedPreview', () => {
+  it('never routes host keyboard commands to a hidden guest with stale native focus', () => {
+    const handle = nav()
+    const host = mountPane('url:hidden')
+    const unregister = registerPreviewNav('url:hidden', handle)
+    host.focus()
+    host.setAttribute('data-pane-hidden', '')
+    expect(commandFocusedPreview('reload')).toBe(false)
+    expect(handle.reload).not.toHaveBeenCalled()
+    unregister()
+  })
+
   it('reports no handler when focus is elsewhere, so ⌘R falls back to the window', () => {
     const handle = nav()
 

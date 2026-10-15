@@ -1,12 +1,6 @@
 import { atom, type WritableAtom } from 'nanostores'
 
-// Web-adapted (B2 leaf): the `InterfaceMode` value type owns the app's advanced/simple
-// window machinery, which lives in the B3 store layer (`store/interface-mode`, not yet
-// ported to this fork). This module is pure persistence plumbing and only needs the
-// 2-value union, so inline it here rather than pulling the whole B3 store forward.
-// B3 porters: when `store/interface-mode` lands, switch back to
-// `import type { InterfaceMode } from '@/store/interface-mode'` and drop this local alias.
-type InterfaceMode = 'advanced' | 'simple'
+import type { InterfaceMode } from '@/store/interface-mode'
 
 import { type Codec, Codecs } from './persisted'
 import { readKey, writeKey } from './storage'
@@ -73,6 +67,7 @@ export function createLayoutPersistence(initialMode: InterfaceMode, persistent: 
   const snapshots = new Set<string>()
   let mode = initialMode
   let restoring = false
+  let held = false
 
   const legacy = persistent ? migrateLayoutScopes(initialMode) : new Map<string, string>()
 
@@ -82,7 +77,7 @@ export function createLayoutPersistence(initialMode: InterfaceMode, persistent: 
     if (!restoring) {
       snapshots.add(keyFor(key))
 
-      if (persistent) {
+      if (persistent && !held) {
         // Explicit empties keep migration retries from reviving cleared state.
         writeKey(keyFor(key), mode === 'simple' ? (raw ?? 'null') : raw)
       }
@@ -145,6 +140,11 @@ export function createLayoutPersistence(initialMode: InterfaceMode, persistent: 
     },
     get restoring() {
       return restoring
+    },
+    /** While held, layout changes stay in memory: a borrowed layout (the first-run demo) is never
+     *  written over the user's own, and a relaunch opens on the user's layout. */
+    hold(next: boolean) {
+      held = next
     },
     has(key: string) {
       return snapshots.has(keyFor(key))

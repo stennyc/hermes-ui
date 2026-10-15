@@ -202,11 +202,17 @@ export interface BotRequestOptions {
    *  a cold backend spawn takes the pool's reserved slot; leave unset for
    *  passive roster warming. Only source-scoped routes can carry it. */
   spawnPriority?: 'background' | 'foreground'
-  /** Per-call RPC deadline (ms). Routed (source-scoped) calls forward it to
-   *  `host.requestProfile`; the local fallback path ignores it (its socket
-   *  carries its own gateway-side deadline). */
+  /** Per-request wait for RPCs that legitimately outlive the socket's 30 s
+   *  default (session.compress runs an LLM summary); unset keeps the default. */
   timeoutMs?: number
 }
+
+/** Writes to a bot's own profile only ever come from a user action (a save,
+ *  a section move, an avatar change, a duplicate). The pool reserves a slot
+ *  for foreground dials only, so a write left at the background default
+ *  queues behind warm bot backends, times out after 30 s, then backs off —
+ *  the write is lost. They dial foreground unless the caller says otherwise. */
+const PROFILE_WRITE_METHODS = new Set(['profiles.configure', 'profiles.create', 'profiles.set_asset'])
 
 export async function requestForBot<T = unknown>(
   bot: Partial<RosterRow> | null | undefined,
@@ -224,18 +230,16 @@ export async function requestForBot<T = unknown>(
     try {
       const routedParams = scopedBotParams(route, method, params)
 
+      const spawnPriority =
+        options?.spawnPriority ?? (PROFILE_WRITE_METHODS.has(method) ? ('foreground' as const) : undefined)
+
       // Keep the three-argument shape when no options were given so older
       // desktop shells (and the arity-pinning tests) see the same call.
-      const hasRouteOptions = options?.spawnPriority || options?.timeoutMs !== undefined
-      return await (hasRouteOptions
-        ? host.requestProfile(
-            route,
-            method,
-            routedParams,
-            options?.timeoutMs,
-            options?.spawnPriority ? { spawnPriority: options.spawnPriority } : undefined,
-          )
-        : host.requestProfile(route, method, routedParams))
+      return await (spawnPriority
+        ? host.requestProfile(route, method, routedParams, options?.timeoutMs, { spawnPriority })
+        : options?.timeoutMs === undefined
+          ? host.requestProfile(route, method, routedParams)
+          : host.requestProfile(route, method, routedParams, options.timeoutMs))
     } catch (error) {
       // React 19 formats query errors with `(error.name || '').trim()`. IPC /
       // JSON-RPC rejections are often plain objects whose `name` is a number,
@@ -245,7 +249,9 @@ export async function requestForBot<T = unknown>(
   }
 
   try {
-    return await host.request(method, params)
+    return await (options?.timeoutMs === undefined
+      ? host.request(method, params)
+      : host.request(method, params, options.timeoutMs))
   } catch (error) {
     throw asRpcError(error, `Gateway request ${method} failed`)
   }

@@ -26,17 +26,12 @@ import { vi } from 'vitest'
 /** One message in a scripted session transcript, in the gateway's own shape. */
 export interface ScriptedMessage {
   content: string
-  /** Display-only wire timestamp, SECONDS — `TranscriptMessage.timestamp`. */
-  timestamp?: number
+  display_kind?: string
   role: string
 }
 
 export interface ScriptedSession {
   contracts?: { follow_profile_config: boolean; room_plumbing: boolean }
-  /** Hidden session, listed by `session.list` only when `include_hidden` is set. */
-  hidden?: boolean
-  /** Stored-session `started_at`, SECONDS. */
-  startedAt?: number
   messages: ScriptedMessage[]
   profile: string
   runtime: string
@@ -83,23 +78,11 @@ export interface RpcCall {
   params: Record<string, unknown>
   /** Socket refcount after this request released its own lease. */
   refcountAfter: number
+  spawnPriority?: 'background' | 'foreground'
+  timeoutMs?: number
 }
 
-/** A stored session a test pre-registers, so the group engine can `session.list`
- *  it (hidden, per-profile) and `session.resume` it (lazy) without ever running a turn. */
-export interface SeededSession {
-  profile: string
-  startedAt?: number
-  title: string
-  messages: Array<{ content?: string; role: string; timestamp?: number }>
-}
-
-export type GatewayOptions = {
-  /** Pre-seeded stored sessions, listed by `session.list` and resumable by `session.resume`. */
-  seedSessions?: SeededSession[]
-  /** Per profile: report the session as `running` on its first N `session.resume`s —
-   *  a live turn in progress, which a cold backfill must not read. */
-  runningResumes?: Record<string, number>
+export interface GatewayOptions {
   /** Per profile: report inflight/running on its first N `session.resume`s. */
   busyResumes?: Record<string, number>
   /** Per profile: carry `pending_approval` on its first `until` resumes. */
@@ -147,6 +130,8 @@ export interface ScriptedGateway {
   rpc: RpcCall[]
   /** Filter `rpc` by method. */
   rpcFor: (method: string) => RpcCall[]
+  /** Route retentions acquired for explicit multi-RPC member turns. */
+  retains: Array<{ spawnPriority?: 'background' | 'foreground' }>
   /** Live socket refcount — zero between turns, never zero during one. */
   refcount: () => number
   /** Sessions by stored id, so a test can pre-seed a finished transcript. */
@@ -170,6 +155,7 @@ export function createGroupGateway(options: GatewayOptions = {}): ScriptedGatewa
   const calls: PromptCall[] = []
   const attaches: AttachCall[] = []
   const rpc: RpcCall[] = []
+  const retains: Array<{ spawnPriority?: 'background' | 'foreground' }> = []
   const timeline: string[] = []
   const storage = new Map<string, unknown>()
   const uiMeta: Record<string, unknown> = {}
@@ -190,33 +176,58 @@ export function createGroupGateway(options: GatewayOptions = {}): ScriptedGatewa
     return stored ? sessions.get(stored) || null : null
   }
 
-  // Pre-seeded stored sessions: registered so `session.list` (hidden, per
-  // profile) can return them and `session.resume` (lazy) can read their
-  // transcripts back — the group-room backfill path, without running a turn.
-  for (const seed of options.seedSessions || []) {
-    sequence += 1
-    const stored = `seed-${seed.profile}-${sequence}`
+  // `profiles.configure`: CAS-checked ui_meta writes, with an optional one-shot conflict.
+  const configureProfiles = (params: Record<string, unknown>) => {
+    if (options.conflictOnce && !conflicted) {
+      conflicted = true
+      const { key, value } = options.conflictOnce
+      uiMeta[key] = value
+      uiMetaRevisions[key] = (uiMetaRevisions[key] || 0) + 1
 
-    const seeded: ScriptedSession = {
-      hidden: true,
-      messages: seed.messages.map(message => ({
-        content: String(message.content ?? ''),
-        ...(message.timestamp !== undefined ? { timestamp: message.timestamp } : {}),
-        role: message.role
-      })),
-      profile: seed.profile,
-      runtime: `rt-${seed.profile}-${sequence}`,
-      startedAt: seed.startedAt,
-      stored,
-      title: seed.title
+      return {
+        applied: {
+          ui_meta: false,
+          ui_meta_conflicts: { [key]: { actual: uiMetaRevisions[key], expected: uiMetaRevisions[key] - 1 } },
+          ui_meta_revisions: { ...uiMetaRevisions }
+        }
+      }
     }
 
-    sessions.set(stored, seeded)
-    runtimeToStored.set(seeded.runtime, stored)
-    titleToStored.set(`${seed.profile}::${seed.title}`, stored)
+    const expected = params.ui_meta_expected_revisions as Record<string, number> | undefined
+    const incoming = (params.ui_meta || {}) as Record<string, unknown>
+
+    if (expected) {
+      for (const key of Object.keys(incoming)) {
+        if ((uiMetaRevisions[key] || 0) !== expected[key]) {
+          return {
+            applied: {
+              ui_meta: false,
+              ui_meta_conflicts: { [key]: { actual: uiMetaRevisions[key] || 0, expected: expected[key] } }
+            }
+          }
+        }
+      }
+    }
+
+    for (const [key, value] of Object.entries(incoming)) {
+      if (value === null) {
+        delete uiMeta[key]
+      } else {
+        uiMeta[key] = value
+      }
+
+      uiMetaRevisions[key] = (uiMetaRevisions[key] || 0) + 1
+    }
+
+    return { applied: { ui_meta: true, ui_meta_revisions: { ...uiMetaRevisions } } }
   }
 
   const handle = async (method: string, params: Record<string, unknown>): Promise<unknown> => {
+    // A legacy Desktop room: no hosted-room driver, nonpersistent owner.
+    if (method === 'groups.capabilities') {
+      return { driver: false, persistent_process: false }
+    }
+
     if (method === 'profiles.list') {
       return {
         profiles: [{ name: 'default', ui_meta: { ...uiMeta }, ui_meta_revisions: { ...uiMetaRevisions } }]
@@ -224,76 +235,7 @@ export function createGroupGateway(options: GatewayOptions = {}): ScriptedGatewa
     }
 
     if (method === 'profiles.configure') {
-      if (options.conflictOnce && !conflicted) {
-        conflicted = true
-        const { key, value } = options.conflictOnce
-        uiMeta[key] = value
-        uiMetaRevisions[key] = (uiMetaRevisions[key] || 0) + 1
-
-        return {
-          applied: {
-            ui_meta: false,
-            ui_meta_conflicts: { [key]: { actual: uiMetaRevisions[key], expected: uiMetaRevisions[key] - 1 } },
-            ui_meta_revisions: { ...uiMetaRevisions }
-          }
-        }
-      }
-
-      const expected = params.ui_meta_expected_revisions as Record<string, number> | undefined
-      const incoming = (params.ui_meta || {}) as Record<string, unknown>
-
-      if (expected) {
-        for (const key of Object.keys(incoming)) {
-          if ((uiMetaRevisions[key] || 0) !== expected[key]) {
-            return {
-              applied: {
-                ui_meta: false,
-                ui_meta_conflicts: { [key]: { actual: uiMetaRevisions[key] || 0, expected: expected[key] } }
-              }
-            }
-          }
-        }
-      }
-
-      for (const [key, value] of Object.entries(incoming)) {
-        if (value === null) {
-          delete uiMeta[key]
-        } else {
-          uiMeta[key] = value
-        }
-
-        uiMetaRevisions[key] = (uiMetaRevisions[key] || 0) + 1
-      }
-
-      return { applied: { ui_meta: true, ui_meta_revisions: { ...uiMetaRevisions } } }
-    }
-
-    if (method === 'session.list') {
-      // The group-room backfill path: `session.list` scoped to a member
-      // profile, hidden sessions included, optional exact-title match. Mirrors
-      // `SessionListResult`/`SessionListRow` — `id` is the STORED id that
-      // `session.resume` later resolves.
-      const profile = String(params.profile ?? '')
-      const exactTitle = params.title != null ? String(params.title) : null
-      const includeHidden = params.include_hidden === true
-
-      const rows = [...sessions.values()]
-        .filter(session => session.profile === profile)
-        .filter(session => includeHidden || !session.hidden)
-        .filter(session => (exactTitle ? session.title === exactTitle : true))
-        .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))
-        .slice(0, typeof params.limit === 'number' ? params.limit : undefined)
-
-      return {
-        sessions: rows.map(session => ({
-          id: session.stored,
-          message_count: session.messages.length,
-          preview: String(session.messages.at(-1)?.content ?? '').slice(0, 120),
-          source: 'tui',
-          started_at: session.startedAt ?? 0,
-          title: session.title
-        }))
-      }
+      return configureProfiles(params)
     }
 
     if (method === 'session.create') {
@@ -338,10 +280,6 @@ export function createGroupGateway(options: GatewayOptions = {}): ScriptedGatewa
       resumesByProfile.set(session.profile, seen)
       let busy = Boolean(options.busyResumes?.[session.profile] && seen <= options.busyResumes[session.profile])
 
-      // A live turn in progress on this profile: the session reports `running`
-      // for its first N resumes, and a cold history reader must skip it.
-      const running = Boolean(options.runningResumes?.[session.profile] && seen <= options.runningResumes[session.profile])
-
       if (session.messages.length > 0) {
         polls += 1
         busy = busy || Boolean(options.pollsBusy && polls <= options.pollsBusy)
@@ -358,9 +296,9 @@ export function createGroupGateway(options: GatewayOptions = {}): ScriptedGatewa
 
       return {
         inflight: retained ?? busy,
-        message_count: busy || running ? 0 : session.messages.length,
-        messages: busy || running || params.omit_messages ? [] : [...session.messages],
-        running: running ? true : false,
+        message_count: busy ? 0 : session.messages.length,
+        messages: busy || params.omit_messages ? [] : [...session.messages],
+        running: false,
         session_id: session.runtime,
         session_key: session.stored,
         ...(clarify && seen <= clarify.until ? { open_requests: [clarify.payload] } : {}),
@@ -444,7 +382,13 @@ export function createGroupGateway(options: GatewayOptions = {}): ScriptedGatewa
     notify: vi.fn(),
     notifyError: vi.fn(),
     request: async (method: string, params: Record<string, unknown> = {}) => record(method, params),
-    requestProfile: async (_route: unknown, method: string, params: Record<string, unknown> = {}) => {
+    requestProfile: async (
+      _route: unknown,
+      method: string,
+      params: Record<string, unknown> = {},
+      timeoutMs?: number,
+      options?: { spawnPriority?: 'background' | 'foreground' }
+    ) => {
       refcount += 1
 
       try {
@@ -456,11 +400,12 @@ export function createGroupGateway(options: GatewayOptions = {}): ScriptedGatewa
           disposals += 1
         }
 
-        rpc.push({ method, params, refcountAfter: refcount })
+        rpc.push({ method, params, refcountAfter: refcount, spawnPriority: options?.spawnPriority, timeoutMs })
         timeline.push(method)
       }
     },
-    retainProfile: async () => {
+    retainProfile: async (_route: unknown, options?: { spawnPriority?: 'background' | 'foreground' }) => {
+      retains.push({ spawnPriority: options?.spawnPriority })
       timeline.push('retain')
       refcount += 1
       let released = false
@@ -495,6 +440,7 @@ export function createGroupGateway(options: GatewayOptions = {}): ScriptedGatewa
     refcount: () => refcount,
     rpc,
     rpcFor: (method: string) => rpc.filter(entry => entry.method === method),
+    retains,
     sessions,
     storage,
     timeline,
@@ -511,6 +457,8 @@ export async function pluginSdkMock(host: Record<string, unknown>) {
   const nanostores = await import('nanostores')
 
   return {
+    // Real value: approval.respond forwards it as its client deadline (#60654).
+    APPROVAL_RESPOND_TIMEOUT_MS: 300_000,
     atom: nanostores.atom,
     // Feature-detected SDK members: the modules read them off the namespace
     // and fall back when absent, but vitest rejects a namespace access with
@@ -519,8 +467,9 @@ export async function pluginSdkMock(host: Record<string, unknown>) {
     blobatarSvg: undefined,
     computed: nanostores.computed,
     createBudgetedLoop: undefined,
+    gatewayActivationEpoch: () => 0,
     host,
-    SkillsView: undefined,
+    CapabilitiesView: undefined,
     MessageTextContent: undefined,
     Streamdown: undefined,
     queryClient: { invalidateQueries: () => undefined },

@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import type { ToolCallMessagePartProps } from '@assistant-ui/react'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { atom } from 'nanostores'
@@ -11,7 +10,6 @@ import { $connectionRequests, type ConnectionRequest, setConnectionRequest } fro
 import { $gateway } from '@/store/gateway'
 import { _resetSessionOwnerHintsForTests, setSessionOwnerHint } from '@/store/session'
 
-// jsdom has no preload bridge, so isOnboardingEnabled() is false here: the card must not depend on it.
 // Runtime id (events, operation store) and stored id (owner hints) differ in the app.
 const SESSION_ID = 'runtime-1'
 const STORED_ID = 'stored-1'
@@ -20,6 +18,7 @@ const OWNER = { connectionId: 'connection-1', profile: 'default' }
 const REQUEST: ConnectionRequest = {
   deadlineAt: 1_800_000_000,
   opId: 'operation-1',
+  seq: 0,
   toolCallId: 'connector-call-1',
   sessionId: SESSION_ID,
   settled: false,
@@ -28,18 +27,26 @@ const REQUEST: ConnectionRequest = {
     {
       action: 'connect',
       connectUrl: 'https://connect.example/gmail',
+      connectionId: '',
       detail: '',
+      discoveryError: null,
       kind: 'connector',
+      instructions: null,
       name: 'gmail',
+      requiredEnv: [],
       state: 'initiated',
       tools: []
     },
     {
       action: 'connect',
       connectUrl: 'https://connect.example/notion',
+      connectionId: '',
       detail: '',
+      discoveryError: null,
       kind: 'connector',
+      instructions: null,
       name: 'notion',
+      requiredEnv: [],
       state: 'initiated',
       tools: []
     }
@@ -76,6 +83,8 @@ function view(sessionId: string, storedId: string): SessionView {
     $model: atom(''),
     $provider: atom(''),
     $reasoningEffort: atom(''),
+    $reasoningEffortPending: atom(false),
+    $reasoningEffortWire: atom(''),
     $runtimeId: atom(sessionId),
     $storedId: atom(storedId),
     $turnStartedAt: atom(null),

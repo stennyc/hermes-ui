@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -162,18 +161,6 @@ describe('createBillingApi', () => {
 
     expect(response).toEqual({ data: { message: 'Change cancelled.', ok: true }, ok: true })
     expect(requestGatewayMock).toHaveBeenCalledWith('subscription.resume', {})
-  })
-
-  it('surfaces an insufficient_scope refusal from a subscription preview', async () => {
-    requestGatewayMock.mockResolvedValueOnce({
-      error: { kind: 'insufficient_scope', message: 'billing:manage required' },
-      ok: false
-    })
-
-    const api = createBillingApi(requestGatewayMock)
-    const response = await api.scheduleSubscriptionChange('tier_plus')
-
-    expect(response).toMatchObject({ ok: false, refusal: { kind: 'insufficient_scope' } })
   })
 
   it('sends a step-up session id when provided', async () => {

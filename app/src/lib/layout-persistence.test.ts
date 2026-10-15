@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { createLayoutPersistence, LAYOUT_KEYS } from './layout-persistence'

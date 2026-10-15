@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 /**
  * Cross-connection Bot Mode: a roster row can belong to another registered
  * connection's backend, and a group chat can seat members from several

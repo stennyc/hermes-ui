@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -7,7 +6,9 @@ import { FanMenu } from './fan-menu'
 
 vi.mock('./tooltip', () => ({
   Tip: ({ children, side }: { children: ReactNode; side: string }) => (
-    <span data-testid="tip" data-tip-side={side}>{children}</span>
+    <span data-testid="tip" data-tip-side={side}>
+      {children}
+    </span>
   )
 }))
 

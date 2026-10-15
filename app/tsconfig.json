@@ -2,8 +2,14 @@
   "compilerOptions": {
     "target": "ES2023",
     "useDefineForClassFields": true,
-    "lib": ["DOM", "DOM.Iterable", "ES2023"],
-    "types": ["node"],
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "ES2023"
+    ],
+    "types": [
+      "node"
+    ],
     "allowJs": false,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -16,17 +22,51 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "paths": {
-      "@/*": ["./src/*"],
-      "@hermes/plugin-sdk": ["./src/sdk/index.ts"],
-      "@hermes/shared/ansi": ["../shared/src/ansi.ts"],
-      "@hermes/shared/billing": ["../shared/src/billing-types.ts"],
-      "@hermes/shared/billing-policy": ["../shared/src/billing-policy.ts"],
-      "@hermes/shared/color": ["../shared/src/color.ts"],
-      "@hermes/shared/i18n": ["../shared/src/i18n.ts"],
-      "@hermes/shared/translucency": ["../shared/src/translucency.ts"],
-      "@hermes/shared": ["../shared/src/index.ts"],
-      "@hermes/shared/*": ["../shared/src/*"]
+      "@/*": [
+        "./src/*"
+      ],
+      "@hermes/plugin-sdk": [
+        "./src/sdk/index.ts"
+      ],
+      "@hermes/shared/ansi": [
+        "../shared/src/ansi.ts"
+      ],
+      "@hermes/shared/billing": [
+        "../shared/src/billing-types.ts"
+      ],
+      "@hermes/shared/billing-policy": [
+        "../shared/src/billing-policy.ts"
+      ],
+      "@hermes/shared/color": [
+        "../shared/src/color.ts"
+      ],
+      "@hermes/shared/i18n": [
+        "../shared/src/i18n.ts"
+      ],
+      "@hermes/shared/translucency": [
+        "../shared/src/translucency.ts"
+      ],
+      "@hermes/shared": [
+        "../shared/src/index.ts"
+      ],
+      "@hermes/shared/*": [
+        "../shared/src/*"
+      ]
     }
   },
-  "include": ["src", "../shared/src"]
+  "include": [
+    "src",
+    "../shared/src"
+  ],
+  "exclude": [
+    "e2e",
+    "electron",
+    "playwright.config.ts",
+    "../shared/src/**/*.test.ts",
+    "../shared/src/**/*.spec.ts",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/*.spec.ts",
+    "node_modules"
+  ]
 }

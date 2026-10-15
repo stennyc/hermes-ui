@@ -24,26 +24,9 @@ const EMPTY: readonly never[] = []
  * there instead.
  */
 export function useSessionSlice<T>(store: SliceStore<T>, key: string | null): T[] {
-  // Cache the snapshot to avoid returning new references on every read.
-  const cacheRef = useRef<{ key: string | null; value: T[] }>({ key: null, value: EMPTY as unknown as T[] })
-
   return useSyncExternalStore(
     onChange => store.listen(onChange),
-    () => {
-      if (!key) {
-        return EMPTY as unknown as T[]
-      }
-
-      const current = store.get()[key] ?? (EMPTY as unknown as T[])
-
-      // Return cached value if unchanged to maintain referential stability
-      if (cacheRef.current.key === key && cacheRef.current.value === current) {
-        return cacheRef.current.value
-      }
-
-      cacheRef.current = { key, value: current }
-      return current
-    }
+    () => (key ? (store.get()[key] ?? (EMPTY as unknown as T[])) : (EMPTY as unknown as T[]))
   )
 }
 
@@ -76,25 +59,7 @@ export function useStoreSelector<T, S>(store: ReadableStore<T>, select: (value: 
 
   const subscribe = useCallback((onChange: () => void) => store.listen(onChange), [store])
 
-  // Cache the snapshot to avoid returning new references on every read,
-  // which would cause an infinite re-render loop in useSyncExternalStore.
-  const cacheRef = useRef<{ storeSnapshot: T | undefined; value: S | undefined }>({
-    storeSnapshot: undefined,
-    value: undefined,
-  })
-
-  return useSyncExternalStore(subscribe, () => {
-    const current = selectRef.current(store.get())
-
-    // Return cached value if unchanged to maintain referential stability
-    const storeSnapshot = store.get()
-    if (cacheRef.current.storeSnapshot === storeSnapshot && cacheRef.current.value === current) {
-      return cacheRef.current.value as S
-    }
-
-    cacheRef.current = { storeSnapshot, value: current }
-    return current
-  })
+  return useSyncExternalStore(subscribe, () => selectRef.current(store.get()))
 }
 
 /**
@@ -133,21 +98,5 @@ export function useStoresSelector<S>(stores: readonly ReadableStore<unknown>[], 
     [stable]
   )
 
-  // Cache the snapshot to avoid returning new references on every read.
-  const cacheRef = useRef<{ selectFn: (() => S) | null; value: S | undefined }>({
-    selectFn: null,
-    value: undefined,
-  })
-
-  return useSyncExternalStore(subscribe, () => {
-    const current = selectRef.current()
-
-    // Return cached value if unchanged to maintain referential stability
-    if (cacheRef.current.selectFn === selectRef.current && cacheRef.current.value === current) {
-      return cacheRef.current.value as S
-    }
-
-    cacheRef.current = { selectFn: selectRef.current, value: current }
-    return current
-  })
+  return useSyncExternalStore(subscribe, () => selectRef.current())
 }

@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 /**
  * Regression guard: the desktop's gateway-switch publication runs inside
  * nanostores' batch(). nanostores 1.4.0–1.4.1 annotated batch() with

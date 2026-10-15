@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Right-click a tab -> Reload remounts THAT pane's content: its epoch (the

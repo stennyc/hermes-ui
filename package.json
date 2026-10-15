@@ -1,0 +1,24 @@
+{
+  "name": "hermes-ui-android",
+  "version": "1.0.0",
+  "description": "Capacitor wrapper for Hermes UI",
+  "main": "index.js",
+  "scripts": {
+    "build": "cd /root/hermes-ui-repo/app && bun run build",
+    "sync": "npx cap sync",
+    "android": "npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.1.0",
+    "@capacitor/core": "^6.1.0",
+    "@capacitor/cli": "^6.1.0",
+    "@capacitor/app": "^6.0.0",
+    "@capacitor/haptics": "^6.0.0",
+    "@capacitor/keyboard": "^6.0.0",
+    "@capacitor/status-bar": "^6.0.0",
+    "@capacitor/splash-screen": "^6.0.0",
+    "@capacitor/push-notifications": "^6.0.0",
+    "@capacitor/local-notifications": "^6.0.0",
+    "@capacitor/preferences": "^6.0.0"
+  }
+}

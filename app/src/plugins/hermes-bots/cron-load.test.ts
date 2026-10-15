@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 /**
  * `loadRoutines` — the pane's one read, and the two things it must survive.
  *

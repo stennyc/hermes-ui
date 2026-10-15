@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { act, render } from '@testing-library/react'
 import { atom } from 'nanostores'
 import { beforeEach, describe, expect, it, vi } from 'vitest'

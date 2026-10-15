@@ -1,9 +1,10 @@
-import { useCallback, useSyncExternalStore, useRef } from 'react'
+import { useSyncExternalStore } from 'react'
 
 import { $composerActionsBySession } from '@/store/composer-actions'
 import { $statusItemsBySession } from '@/store/composer-status'
 import { $previewStatusBySession } from '@/store/preview-status'
 import { $sessionControlBySession } from '@/store/session-control'
+import { $retainedTodosBySession } from '@/store/todos'
 
 /** Structural view of the per-session feeds — they hold different item
  *  types, and all this hook needs from each is "does this key have rows". */
@@ -15,7 +16,11 @@ interface PresenceFeed {
 const FEEDS: PresenceFeed[] = [$statusItemsBySession, $composerActionsBySession, $previewStatusBySession]
 
 const subscribe = (onChange: () => void) => {
-  const offs = [...FEEDS.map(feed => feed.listen(onChange)), $sessionControlBySession.listen(onChange)]
+  const offs = [
+    ...FEEDS.map(feed => feed.listen(onChange)),
+    $sessionControlBySession.listen(onChange),
+    $retainedTodosBySession.listen(onChange)
+  ]
 
   return () => {
     for (const off of offs) {
@@ -35,31 +40,26 @@ const subscribe = (onChange: () => void) => {
  * OTHER sessions. The boolean snapshot bails out of all of that, re-rendering
  * only on the actual show/hide transition.
  */
-export function useSessionStatusPresence(sessionId: string | null): boolean {
-  const cacheRef = useRef<{ sessionId: string | null; value: boolean }>({ sessionId: null, value: false })
-
+export function useSessionStatusPresence(sessionId: string | null, busy = false): boolean {
   return useSyncExternalStore(subscribe, () => {
     if (!sessionId) {
       return false
     }
 
-    const hasFeedItems = FEEDS.some(feed => (feed.get()[sessionId]?.length ?? 0) > 0)
-    if (hasFeedItems) {
+    if (FEEDS.some(feed => (feed.get()[sessionId]?.length ?? 0) > 0)) {
+      return true
+    }
+
+    if (!busy && ($retainedTodosBySession.get()[sessionId]?.length ?? 0) > 0) {
       return true
     }
 
     const control = $sessionControlBySession.get()[sessionId]
-    const result = Boolean(
+
+    return Boolean(
       control?.error ||
       (control?.snapshot &&
         (control.snapshot.goal !== null || control.snapshot.loop !== null || control.snapshot.heartbeat !== null))
     )
-
-    // Cache to avoid returning new boolean references on every read
-    if (cacheRef.current.sessionId === sessionId && cacheRef.current.value === result) {
-      return cacheRef.current.value
-    }
-    cacheRef.current = { sessionId, value: result }
-    return result
   })
 }

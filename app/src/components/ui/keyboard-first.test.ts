@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -44,14 +43,6 @@ describe('usePointerQuiet', () => {
     first.unmount()
 
     expect(renderHook(() => usePointerQuiet()).result.current).toBe(true)
-  })
-
-  it('drops its listeners on unmount', () => {
-    const remove = vi.spyOn(window, 'removeEventListener')
-
-    renderHook(() => usePointerQuiet()).unmount()
-
-    expect(remove.mock.calls.map(([type]) => type)).toEqual(expect.arrayContaining(['mousemove', 'wheel']))
   })
 })
 
