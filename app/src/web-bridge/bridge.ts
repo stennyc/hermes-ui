@@ -507,6 +507,12 @@ function openOauthLoginPopup(base: string, origin: string | null): Promise<Deskt
     let settled = false
     const startedAt = Date.now()
     const TIMEOUT_MS = 5 * 60_000
+    // Grace window: when the popup closes, the gateway's /login page typically
+    // auto-closes on success AFTER the session cookie is already set. A single
+    // 600ms tick is not guaranteed to observe the cookie before popup.closed
+    // flips. Probe up to CLOSE_GRACE_MS after close before declaring failure.
+    const CLOSE_GRACE_MS = 3_000
+    let closeTime: null | number = null
 
     const finish = (connected: boolean): void => {
       if (settled) {return}
@@ -514,7 +520,7 @@ function openOauthLoginPopup(base: string, origin: string | null): Promise<Deskt
       clearInterval(timer)
 
       try {
-        if (!popup.closed) {popup.close()}
+        if (popup && !popup.closed) {popup.close()}
       } catch {
         // Closing a window we opened is always allowed, but guard anyway.
       }
@@ -535,11 +541,25 @@ function openOauthLoginPopup(base: string, origin: string | null): Promise<Deskt
           return
         }
 
-        if (popup.closed || Date.now() - startedAt > TIMEOUT_MS) {
+        // Track popup close time for the grace window instead of immediately
+        // failing — the cookie may land in the jar just after the page closes.
+        if (popup.closed) {
+          if (closeTime === null) {
+            closeTime = Date.now()
+          }
+
+          if (Date.now() - closeTime > CLOSE_GRACE_MS) {
+            finish(false)
+          }
+
+          return
+        }
+
+        if (Date.now() - startedAt > TIMEOUT_MS) {
           finish(false)
         }
       })()
-    }, 600)
+    }, 400)
   })
 }
 
