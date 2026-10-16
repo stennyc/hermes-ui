@@ -92,12 +92,16 @@
    (this variant) flatten everything into one shared scroll. See ChatSidebar. */
 @custom-variant compact (@media (max-height: 768px));
 
+/* Collapse-Bold — vendor font (Apache-2.0, ships in @nous-research/ui). Copied
+   into src/fonts/ so the vite asset pipeline rewrites it to a hashed dist
+   asset; a bare node_modules URL leaks through the build and 404s at runtime
+   (OTF/woff decode errors in the console). Keep in sync with the package. */
 @font-face {
   font-family: 'Collapse';
   font-style: normal;
   font-weight: 700;
   font-display: swap;
-  src: url('../../../node_modules/@nous-research/ui/dist/fonts/Collapse-Bold.woff2') format('woff2');
+  src: url('./fonts/Collapse-Bold.woff2') format('woff2');
 }
 
 /* JetBrains Mono — bundled terminal font (Apache-2.0) so bold/italic share the
