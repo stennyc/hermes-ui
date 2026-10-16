@@ -98,6 +98,9 @@ export function invalidateProfileListFetches(): void {
   // switch must start a fresh fetch against the new backend, not ride the
   // previous backend's in-flight retry chain.
   refreshInFlight = null
+  // A new connection/switch is a fresh auth context: clear the 401 breaker so
+  // the first fetch against the new backend is not skipped on a stale flag.
+  profileAuthFailed = false
 }
 
 // Single-flight guard: on gateway open both useBackgroundSync and the
@@ -106,9 +109,32 @@ export function invalidateProfileListFetches(): void {
 // share one retry chain instead of stampeding /api/profiles (#70679).
 let refreshInFlight: Promise<ProfileInfo[]> | null = null
 
+// Auth-failure breaker: once /api/profiles answers 401/403 the session is
+// dead (dashboard restarted, cookie gone, gateway re-bound) and no amount of
+// re-triggering from focus/visibilitychange/gatewayState effects can fix it
+// without a re-login — but each trigger still burns the full 3-attempt retry
+// chain (500ms + 1000ms backoffs) and a fresh fetch, so /api/profiles,
+// /api/profiles/sessions and /api/profiles/active 401 forever while the SPA
+// is alive. 401/403 is TERMINAL for this session (unlike 5xx / network
+// errors, which are transient): set the flag on first auth failure, skip
+// every subsequent auto-trigger until invalidateProfileListFetches() (a
+// connection switch) or a successful fetch clears it.
+let profileAuthFailed = false
+
+function isAuthFailure(error: unknown): boolean {
+  const status = (error as { status?: number } | null)?.status
+  return status === 401 || status === 403
+}
+
 export function refreshProfiles(): Promise<ProfileInfo[]> {
   if (refreshInFlight) {
     return refreshInFlight
+  }
+
+  // Terminal auth failure already recorded: serve the cached list, do NOT
+  // start another fetch that is guaranteed to 401 again.
+  if (profileAuthFailed) {
+    return Promise.resolve($profiles.get())
   }
 
   const flight = (async () => {
@@ -119,6 +145,12 @@ export function refreshProfiles(): Promise<ProfileInfo[]> {
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         const { profiles } = await getProfiles()
+
+        // A 200 means the session is alive again — clear the breaker so the
+        // next transient hiccup (backend not up yet, global-remote pre-proxy
+        // window) still gets its full retry chain (#70679) instead of being
+        // skipped on a stale flag.
+        profileAuthFailed = false
 
         if (epoch === profileListEpoch) {
           batch(() => {
@@ -132,6 +164,17 @@ export function refreshProfiles(): Promise<ProfileInfo[]> {
 
         return profiles
       } catch (error) {
+        if (isAuthFailure(error)) {
+          // 401/403: the session itself is gone. Retrying within this flight
+          // cannot help (the cookie/token is dead, not the backend), so record
+          // the breaker and stop — the next auto-trigger is a no-op until a
+          // connection switch or re-login.
+          profileAuthFailed = true
+          console.error('[profiles] refreshProfiles: 401/403 (session expired) — stopping auto-refresh until re-login or gateway switch:', (error as Error).message ?? error)
+
+          throw error
+        }
+
         if (attempt === MAX_RETRIES || epoch !== profileListEpoch) {
           // Surface the failure so it's visible in the console — the prior
           // silent catch in refreshActiveProfile() hid global-remote timing
