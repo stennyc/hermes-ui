@@ -34,6 +34,8 @@ import type {
   HermesConnection
 } from '@/global'
 
+import type { GatewayWsUrlResult } from '@hermes/shared'
+
 import type { HermesNotification } from '../../electron/notification-types'
 
 import {
@@ -355,7 +357,7 @@ function connectionFor(connectionId: string | null | undefined, profile?: string
 async function gatewayWsUrlFor(
   connectionId: string | null | undefined,
   profile?: string | null
-): Promise<string> {
+): Promise<GatewayWsUrlResult> {
   const { gateway } = gatewayForConnectionId(connectionId)
   const base = baseUrlForGateway(gateway)
   const origin = upstreamOriginFor(gateway.url || '')
@@ -364,7 +366,11 @@ async function gatewayWsUrlFor(
   if (token) {return withGatewayRoute(buildTokenWsUrlForGateway(gateway, token), origin)}
   const ticket = await mintWsTicketForGateway(gateway, origin)
 
-  return withGatewayRoute(`${base.replace(/^http/, 'ws')}/api/ws?ticket=${encodeURIComponent(ticket)}`, origin)
+  if (!ticket.ok) {
+    return { ok: false, needsOauthLogin: ticket.status === 401 || ticket.status === 403, error: ticket.error }
+  }
+
+  return withGatewayRoute(`${base.replace(/^http/, 'ws')}/api/ws?ticket=${encodeURIComponent(ticket.ticket)}`, origin)
 }
 
 function buildTokenWsUrlForGateway(gateway: ReturnType<typeof getActiveGateway>, token: string): string {
@@ -373,7 +379,21 @@ function buildTokenWsUrlForGateway(gateway: ReturnType<typeof getActiveGateway>,
   return `${base.replace(/^http/, 'ws')}/api/ws?token=${encodeURIComponent(token)}`
 }
 
-async function mintWsTicketForGateway(gateway: ReturnType<typeof getActiveGateway>, origin: string | null): Promise<string> {
+/**
+ * Mint a one-shot WebSocket ticket. Returns a discriminated result rather
+ * than throwing: an HTTP 401/403 is a *reauth* signal, not a transport
+ * error. The caller (getGatewayWsUrl) maps it to `{ ok: false,
+ * needsOauthLogin: true }` so the shared resolver raises
+ * GatewayReauthRequiredError and the boot reconnect loop trips its
+ * primaryReauthError circuit breaker instead of re-minting into an endless
+ * 401 storm.
+ */
+type MintTicketResult = { ok: true; ticket: string } | { ok: false; status: number; error: string }
+
+async function mintWsTicketForGateway(
+  gateway: ReturnType<typeof getActiveGateway>,
+  origin: string | null
+): Promise<MintTicketResult> {
   const base = baseUrlForGateway(gateway)
   const credentials = isCapacitorWebView() ? 'omit' : 'same-origin'
   const res = await fetch(withGatewayRoute(`${base}/api/auth/ws-ticket`, origin), {
@@ -382,14 +402,16 @@ async function mintWsTicketForGateway(gateway: ReturnType<typeof getActiveGatewa
   })
 
   if (!res.ok) {
-    throw new Error(`${res.status}: failed to mint websocket ticket`)
+    return { ok: false, status: res.status, error: `${res.status}: failed to mint websocket ticket` }
   }
 
   const body = (await res.json()) as { ticket?: string }
 
-  if (!body.ticket) {throw new Error('ws-ticket response had no ticket')}
+  if (!body.ticket) {
+    return { ok: false, status: 0, error: 'ws-ticket response had no ticket' }
+  }
 
-  return body.ticket
+  return { ok: true, ticket: body.ticket }
 }
 
 function wsBaseUrl(): string {
@@ -402,7 +424,7 @@ function buildTokenWsUrl(token: string): string {
   return `${wsBaseUrl()}/api/ws?token=${encodeURIComponent(token)}`
 }
 
-async function mintWsTicket(origin: string | null): Promise<string> {
+async function mintWsTicket(origin: string | null): Promise<MintTicketResult> {
   return mintWsTicketForGateway(getActiveGateway(), origin)
 }
 
@@ -978,7 +1000,15 @@ export function createWebBridge(): Window['hermesDesktop'] {
       if (token) {return withGatewayRoute(buildTokenWsUrl(token), origin)}
       const ticket = await mintWsTicket(origin)
 
-      return withGatewayRoute(`${wsBaseUrl()}/api/ws?ticket=${encodeURIComponent(ticket)}`, origin)
+      if (!ticket.ok) {
+        // A 401/403 here means the session the cookie gateway minted for us is
+        // dead: report needsOauthLogin so the shared resolver raises
+        // GatewayReauthRequiredError and the boot loop's primaryReauthError
+        // breaker stops the reconnect/re-mint loop instead of spinning.
+        return { ok: false, needsOauthLogin: ticket.status === 401 || ticket.status === 403, error: ticket.error }
+      }
+
+      return withGatewayRoute(`${wsBaseUrl()}/api/ws?ticket=${encodeURIComponent(ticket.ticket)}`, origin)
     },
     getGatewayWsUrlFor: async ({ connectionId, profile }) => gatewayWsUrlFor(connectionId ?? undefined, profile),
     openSessionWindow: async sessionId => {
