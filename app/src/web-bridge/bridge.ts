@@ -24,7 +24,12 @@ import type {
   DesktopBootProgress,
   DesktopConnectionConfig,
   DesktopConnectionConfigInput,
+  DesktopConnectionProbeResult,
+  DesktopConnectionTestResult,
+  DesktopConnectionsRegistry,
   DesktopOauthLoginResult,
+  DesktopRegistryConnection,
+  DesktopRegistryConnectionInput,
   HermesApiRequest,
   HermesConnection
 } from '@/global'
@@ -33,10 +38,14 @@ import type { HermesNotification } from '../../electron/notification-types'
 
 import {
   activeUpstreamOrigin,
+  addGateway,
   classifyGatewayReach,
   getActiveGateway,
+  listGateways,
   normalizeBase,
+  removeGateway,
   servingBase,
+  setActiveGateway,
   syncDevGatewayCookie,
   updateGateway,
   upstreamOriginFor,
@@ -105,6 +114,156 @@ function persistConnection(input: DesktopConnectionConfigInput): StoredConnectio
   return loadStoredConnection()
 }
 
+// ── Saved-connections registry, backed by the web gateway store ─────────────
+// The desktop registry lives in Electron's main process; on web/Capacitor it
+// is backed by `web-bridge/gateways.ts` (localStorage-persisted), so the
+// "Saved connections" subpage lists, adds, edits, removes, and re-selects
+// gateways just like the desktop. Ids are `gw:`-prefixed gateway ids.
+
+function registryGateway(id: string): { id: string; gateway: ReturnType<typeof getActiveGateway> } | null {
+  if (!id.startsWith('gw:')) {
+    return null
+  }
+
+  const gatewayId = id.slice(3)
+  const gateway = listGateways().find(entry => entry.id === gatewayId)
+
+  return gateway ? { id, gateway } : null
+}
+
+function registryRow(id: string): DesktopRegistryConnection {
+  const hit = registryGateway(id)
+  const gateway = hit?.gateway ?? getActiveGateway()
+
+  return {
+    id,
+    kind: 'remote',
+    label: gateway.name || gateway.url || 'Gateway',
+    url: gateway.url || servingBase(),
+    authMode: gateway.authMode,
+    tokenSet: gateway.authMode === 'token' && Boolean(gateway.token),
+    tokenPreview: gateway.authMode === 'token' && gateway.token ? `...${gateway.token.slice(-4)}` : null,
+  }
+}
+
+function buildWebRegistry(): DesktopConnectionsRegistry {
+  const gateways = listGateways()
+  const active = getActiveGateway()
+
+  return {
+    version: 1,
+    primary: active.id ? `gw:${active.id}` : '',
+    secureTokenStorage: false,
+    connections: gateways.map((gateway, index) => ({
+      id: `gw:${gateway.id}`,
+      kind: 'remote' as const,
+      label: gateway.name || gateway.url || `Gateway ${index + 1}`,
+      url: gateway.url || servingBase(),
+      authMode: gateway.authMode,
+      tokenSet: gateway.authMode === 'token' && Boolean(gateway.token),
+      tokenPreview: gateway.authMode === 'token' && gateway.token ? `...${gateway.token.slice(-4)}` : null,
+    })),
+  }
+}
+
+async function testRegistryConnection(id: string): Promise<DesktopConnectionTestResult> {
+  const hit = registryGateway(id)
+
+  if (!hit) {
+    return { ok: false, reachable: false, error: 'Unknown connection' }
+  }
+
+  const base = normalizeBase(hit.gateway.url)
+  const origin = upstreamOriginFor(hit.gateway.url)
+  const block = classifyGatewayReach(hit.gateway.url)
+
+  if (block) {
+    return { baseUrl: base, ok: false, reachable: false, error: block }
+  }
+
+  try {
+    const status = await fetchStatus(base, origin)
+
+    return { baseUrl: base, ok: true, reachable: true, version: status?.version ?? null, error: null }
+  } catch (error) {
+    return {
+      baseUrl: base,
+      ok: false,
+      reachable: false,
+      error: error instanceof Error ? error.message : String(error)
+    }
+  }
+}
+
+/**
+ * Every connection in the registry is a `remote` gateway entry; `local`
+ * (Electron-managed runtime) and `ssh` sources have no web equivalent, so the
+ * web save path accepts remote entries and refuses the others with `ok:false`.
+ * The renderer guards these kinds client-side, but the bridge must not trust
+ * it — a crafted payload must not corrupt the gateway store.
+ */
+async function saveRegistryConnection(input: DesktopRegistryConnectionInput): Promise<{
+  ok: boolean
+  connection: DesktopRegistryConnection
+  registry: DesktopConnectionsRegistry
+}> {
+  if (input.kind !== 'remote') {
+    const registry = buildWebRegistry()
+
+    return {
+      ok: false,
+      connection: registryRow(input.id ?? registry.primary),
+      registry,
+    }
+  }
+
+  if (input.id && registryGateway(input.id)) {
+    const gatewayId = input.id.slice(3)
+
+    updateGateway(gatewayId, {
+      ...(input.label !== undefined ? { name: input.label } : {}),
+      ...(input.url !== undefined ? { url: input.url } : {}),
+      ...(input.authMode !== undefined ? { authMode: input.authMode } : {}),
+      ...(input.token !== undefined ? { token: input.token } : {}),
+    })
+  } else {
+    const newId = addGateway({
+      name: input.label,
+      url: input.url ?? '',
+      authMode: input.authMode === 'token' ? 'token' : 'oauth',
+      token: input.token,
+    })
+
+    input.id = `gw:${newId}`
+  }
+
+  const registry = buildWebRegistry()
+
+  return { ok: true, connection: registryRow(input.id), registry }
+}
+
+function removeRegistryConnection(id: string): { ok: boolean; registry: DesktopConnectionsRegistry } {
+  const hit = registryGateway(id)
+
+  if (hit) {
+    removeGateway(hit.gateway.id)
+  }
+
+  return { ok: Boolean(hit), registry: buildWebRegistry() }
+}
+
+function setPrimaryRegistryConnection(id: string): { ok: boolean; registry: DesktopConnectionsRegistry } {
+  const hit = registryGateway(id)
+
+  if (hit) {
+    setActiveGateway(hit.gateway.id, { reload: true })
+  }
+
+  const registry = buildWebRegistry()
+
+  return { ok: Boolean(hit), registry }
+}
+
 function baseUrl(): string {
   return normalizeBase(getActiveGateway().url)
 }
@@ -142,19 +301,82 @@ function resolveToken(): string {
   return gateway.authMode === 'token' ? (gateway.token ?? '') : ''
 }
 
-function wsBaseUrl(): string {
-  const httpBase = baseUrl()
+/**
+ * Resolve a registry `gw:<id>` connection to its gateway entry. A registry
+ * source that no longer exists (edited out, or from an older app version)
+ * resolves to the active gateway, so a dial by a stale id still lands on a
+ * real base rather than throwing — the UI re-lists the registry on mount, so
+ * the row disappears and the user sees the current set instead.
+ */
+function gatewayForConnectionId(connectionId: string | null | undefined): {
+  gateway: ReturnType<typeof getActiveGateway>
+  id: string
+} {
+  const hit = connectionId ? registryGateway(connectionId) : null
 
-  return httpBase.replace(/^http/, 'ws')
+  if (hit) {
+    return { gateway: hit.gateway, id: hit.id }
+  }
+
+  const active = getActiveGateway()
+
+  return { gateway: active, id: active.id ? `gw:${active.id}` : '' }
 }
 
-function buildTokenWsUrl(token: string): string {
-  return `${wsBaseUrl()}/api/ws?token=${encodeURIComponent(token)}`
+function tokenForGateway(gateway: ReturnType<typeof getActiveGateway>): string {
+  return gateway.authMode === 'token' ? (gateway.token ?? '') : ''
 }
 
-async function mintWsTicket(origin: string | null): Promise<string> {
+function baseUrlForGateway(gateway: ReturnType<typeof getActiveGateway>): string {
+  return normalizeBase(gateway.url || servingBase())
+}
+
+function connectionFor(connectionId: string | null | undefined, profile?: string | null): HermesConnection {
+  const { gateway } = gatewayForConnectionId(connectionId)
+  const token = tokenForGateway(gateway)
+
+  return {
+    baseUrl: baseUrlForGateway(gateway),
+    mode: 'remote',
+    source: 'settings',
+    authMode: token ? 'token' : 'oauth',
+    token,
+    wsUrl: token ? buildTokenWsUrlForGateway(gateway, token) : '',
+    connectionId: connectionId ?? undefined,
+    registryScoped: true,
+    logs: [],
+    isFullscreen: false,
+    nativeOverlayWidth: 0,
+    windowButtonPosition: null,
+    ...(profile ? { profile } : {})
+  }
+}
+
+async function gatewayWsUrlFor(
+  connectionId: string | null | undefined,
+  profile?: string | null
+): Promise<string> {
+  const { gateway } = gatewayForConnectionId(connectionId)
+  const base = baseUrlForGateway(gateway)
+  const origin = upstreamOriginFor(gateway.url || '')
+  const token = tokenForGateway(gateway)
+
+  if (token) {return withGatewayRoute(buildTokenWsUrlForGateway(gateway, token), origin)}
+  const ticket = await mintWsTicketForGateway(gateway, origin)
+
+  return withGatewayRoute(`${base.replace(/^http/, 'ws')}/api/ws?ticket=${encodeURIComponent(ticket)}`, origin)
+}
+
+function buildTokenWsUrlForGateway(gateway: ReturnType<typeof getActiveGateway>, token: string): string {
+  const base = baseUrlForGateway(gateway)
+
+  return `${base.replace(/^http/, 'ws')}/api/ws?token=${encodeURIComponent(token)}`
+}
+
+async function mintWsTicketForGateway(gateway: ReturnType<typeof getActiveGateway>, origin: string | null): Promise<string> {
+  const base = baseUrlForGateway(gateway)
   const credentials = isCapacitorWebView() ? 'omit' : 'same-origin'
-  const res = await fetch(withGatewayRoute(`${baseUrl()}/api/auth/ws-ticket`, origin), {
+  const res = await fetch(withGatewayRoute(`${base}/api/auth/ws-ticket`, origin), {
     method: 'POST',
     credentials
   })
@@ -168,6 +390,20 @@ async function mintWsTicket(origin: string | null): Promise<string> {
   if (!body.ticket) {throw new Error('ws-ticket response had no ticket')}
 
   return body.ticket
+}
+
+function wsBaseUrl(): string {
+  const httpBase = baseUrl()
+
+  return httpBase.replace(/^http/, 'ws')
+}
+
+function buildTokenWsUrl(token: string): string {
+  return `${wsBaseUrl()}/api/ws?token=${encodeURIComponent(token)}`
+}
+
+async function mintWsTicket(origin: string | null): Promise<string> {
+  return mintWsTicketForGateway(getActiveGateway(), origin)
 }
 
 /**
@@ -317,8 +553,14 @@ function isCapacitorWebView(): boolean {
 const DEFAULT_API_TIMEOUT_MS = 30_000
 
 async function apiFetch<T>(request: HermesApiRequest): Promise<T> {
-  const { body, method = 'GET', path, profile, timeoutMs } = request
-  let url = baseUrl() + path
+  const { body, connectionId, method = 'GET', path, profile, timeoutMs } = request
+  // A connection-scoped REST call rides the gateway that OWNS the connection
+  // (registry `gw:<id>` → web-bridge/gateways.ts entry), not the window's
+  // active one. Mirrors the WS dial path (connectionFor/getGatewayWsUrlFor).
+  const target = connectionId ? gatewayForConnectionId(connectionId).gateway : getActiveGateway()
+  const base = baseUrlForGateway(target)
+  const origin = upstreamOriginFor(target.url || '')
+  let url = base + path
 
   // Callers like sessions.ts / cron.ts bake `&profile=` into the path already;
   // only append when the URL carries no profile param, so the request ends up
@@ -327,7 +569,7 @@ async function apiFetch<T>(request: HermesApiRequest): Promise<T> {
     url += `${url.includes('?') ? '&' : '?'}profile=${encodeURIComponent(profile)}`
   }
 
-  const token = resolveToken()
+  const token = tokenForGateway(target)
   const headers: Record<string, string> = {}
 
   if (body !== undefined) {headers['Content-Type'] = 'application/json'}
@@ -338,7 +580,7 @@ async function apiFetch<T>(request: HermesApiRequest): Promise<T> {
   // and rely on token header for auth instead of cookies
   const credentials = isCapacitorWebView() ? 'omit' : 'same-origin'
 
-  const res = await fetch(withGatewayRoute(url, activeUpstreamOrigin()), {
+  const res = await fetch(withGatewayRoute(url, origin), {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -705,6 +947,7 @@ export function createWebBridge(): Window['hermesDesktop'] {
 
   const bridge: WebBridge = {
     getConnection: async profile => connection(profile),
+    getConnectionFor: async ({ connectionId, profile }) => connectionFor(connectionId ?? undefined, profile),
     revalidateConnection: async () => ({ ok: true, rebuilt: false }),
     getGatewayWsUrl: async () => {
       // One origin for both the ticket mint and the socket connect, so the dev
@@ -717,6 +960,7 @@ export function createWebBridge(): Window['hermesDesktop'] {
 
       return withGatewayRoute(`${wsBaseUrl()}/api/ws?ticket=${encodeURIComponent(ticket)}`, origin)
     },
+    getGatewayWsUrlFor: async ({ connectionId, profile }) => gatewayWsUrlFor(connectionId ?? undefined, profile),
     openSessionWindow: async sessionId => {
       const opened = window.open(`${window.location.pathname}#/${sessionId}`, '_blank', 'noopener')
 
@@ -741,11 +985,11 @@ export function createWebBridge(): Window['hermesDesktop'] {
       agentSignIn: async () => ({ baseUrl: '', connected: false, ok: false })
     },
     connections: {
-      list: async () => ({ version: 1, primary: '', secureTokenStorage: false, connections: [] }),
-      save: async () => ({ ok: false, connection: {} as any, registry: { version: 1, primary: '', secureTokenStorage: false, connections: [] } }),
-      remove: async () => ({ ok: false, registry: { version: 1, primary: '', secureTokenStorage: false, connections: [] } }),
-      setPrimary: async () => ({ ok: false, registry: { version: 1, primary: '', secureTokenStorage: false, connections: [] } }),
-      test: async () => ({ ok: false }),
+      list: async () => buildWebRegistry(),
+      save: async input => saveRegistryConnection(input),
+      remove: async id => removeRegistryConnection(id),
+      setPrimary: async id => setPrimaryRegistryConnection(id),
+      test: async id => testRegistryConnection(id),
     },
     getProfileRoutes: async () => [],
     openSessionInTerminal: async () => ({ ok: false }),
