@@ -225,6 +225,26 @@ function isSameOrigin(base: string): boolean {
  */
 function openOauthLoginPopup(base: string, origin: string | null): Promise<DesktopOauthLoginResult> {
   return new Promise(resolve => {
+    // WebView / Capacitor: the login UI's /login page is same-origin with the
+    // gateway this app loads (the native shell loads the gateway URL directly),
+    // so navigate IN-PLACE instead of opening a child window. A popup from a
+    // WebView is detached from the opener's JS context, and with
+    // credentials:'omit' (the Capacitor path) even a successful login's
+    // session cookie is not readable back by the opener's probes — login
+    // appears to never complete ("login window closed before authentication
+    // finished"). Navigating in place: the user logs in on this page, the
+    // gateway's redirect chain lands back on the app shell, cookies are in
+    // this WebView's jar (native CookieManager accepts them), and the boot
+    // path re-dials the WS with the live session cookie.
+    if (isCapacitorWebView()) {
+      window.location.assign(withGatewayRoute(`${base}/login`, origin))
+      resolve({ ok: true, baseUrl: base, connected: false })
+      // The page navigates away; this promise's result is unused after the
+      // redirect completes and the app re-mounts (the boot-time WS dial
+      // carries the new session cookie via native CookieManager).
+      return
+    }
+
     const popup = window.open(
       withGatewayRoute(`${base}/login`, origin),
       'hermes-oauth-login',
