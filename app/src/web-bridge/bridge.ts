@@ -94,6 +94,14 @@ function persistConnection(input: DesktopConnectionConfigInput): StoredConnectio
     ...(input.remoteUrl !== undefined ? { url: input.remoteUrl.trim() } : {})
   })
 
+  // Android/Capacitor APK: the native shell reads this key before loading the
+  // WebView, so force-closing and reopening the app starts on this gateway.
+  // No-op in browsers (window.Capacitor is undefined there).
+  if (typeof window !== 'undefined' && (window as any).Capacitor?.Plugins?.Preferences) {
+    const url = input.remoteUrl?.trim() || getActiveGateway().url || servingBase()
+    void (window as any).Capacitor.Plugins.Preferences.set({ key: 'gatewayUrl', value: url }).catch(() => {})
+  }
+
   return loadStoredConnection()
 }
 
