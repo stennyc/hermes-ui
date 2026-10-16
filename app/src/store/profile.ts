@@ -289,6 +289,14 @@ interface ActiveProfileResponse {
 export async function refreshActiveProfile(): Promise<void> {
   const epoch = profileListEpoch
 
+  // 401 breaker tripped (session dead): the /api/profiles/active read below
+  // would 401 and its callers (focus/visibilitychange, gatewayState effects)
+  // would keep re-triggering it. Skip the whole function while the session
+  // is known-expired; it re-runs normally once the breaker is cleared.
+  if (profileAuthFailed) {
+    return
+  }
+
   try {
     const res = await hermesApi<ActiveProfileResponse>({
       path: '/api/profiles/active',
@@ -300,7 +308,14 @@ export async function refreshActiveProfile(): Promise<void> {
     if (epoch === profileListEpoch) {
       setActiveProfile(res.current || 'default')
     }
-  } catch {
+  } catch (error) {
+    // 401/403 here (unauthenticated, not backend-not-up) arms the same
+    // breaker as refreshProfiles: stop burning a /api/profiles/active 401 on
+    // every focus/visibilitychange/gatewayState trigger until re-login or a
+    // gateway switch.
+    if (isAuthFailure(error)) {
+      profileAuthFailed = true
+    }
     // Backend may not be ready; keep the last known value.
   }
 
