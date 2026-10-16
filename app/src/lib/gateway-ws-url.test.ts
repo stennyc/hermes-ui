@@ -164,6 +164,18 @@ describe('resolveGatewayWsUrl', () => {
       await expect(resolveGatewayWsUrl({ getGatewayWsUrl }, tokenConn)).resolves.toBe(tokenConn.wsUrl)
     })
 
+    it('raises a reauth error when the mint reports needsOauthLogin', async () => {
+      const getGatewayWsUrl = vi.fn().mockResolvedValue({
+        error: '401: session expired',
+        needsOauthLogin: true,
+        ok: false
+      })
+
+      await expect(resolveGatewayWsUrl({ getGatewayWsUrl }, tokenConn)).rejects.toBeInstanceOf(
+        GatewayReauthRequiredError
+      )
+    })
+
     it('falls back to the cached URL when the preload method is absent', async () => {
       await expect(resolveGatewayWsUrl({}, tokenConn)).resolves.toBe(tokenConn.wsUrl)
     })

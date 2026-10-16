@@ -88,6 +88,13 @@ export async function resolveGatewayWsUrl(deps: ResolveGatewayWsUrlDeps, conn: G
     if (fresh?.ok) {
       return fresh.wsUrl
     }
+
+    if (fresh?.needsOauthLogin) {
+      throw new GatewayReauthRequiredError(
+        'Your gateway session has expired. Open Settings -> Gateway and click "Sign in" again.',
+        { cause: new Error(fresh.error ?? 'auth required') }
+      )
+    }
   }
 
   return conn.wsUrl

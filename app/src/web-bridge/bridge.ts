@@ -637,8 +637,12 @@ async function apiFetch<T>(request: HermesApiRequest): Promise<T> {
     // can reach Settings -> Gateway (change the URL, switch gateways, sign in).
     // Boot surfaces the reauth state via the WS path (getGatewayWsUrl ->
     // GatewayReauthRequiredError) which drives the boot-failure sign-in branch.
-    // Same error contract as the Electron IPC handler: reject with "NNN: msg".
-    throw new Error(`${res.status}: ${text || res.statusText}`)
+    // Same error contract as the Electron IPC handler: reject with "NNN: msg",
+    // plus a `status` field so consumers can branch on auth failures.
+    const error = new Error(`${res.status}: ${text || res.statusText}`) as Error & { status: number }
+    error.status = res.status
+
+    throw error
   }
 
   if (!text) {return null as T}

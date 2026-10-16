@@ -91,6 +91,16 @@ export function maybeBackfillLegacySessionOwners(): void {
         return
       }
 
+      // A 401/403 means the serving session died — re-arming would rebuild a
+      // request storm until the next enumeration (the boot loop re-enumerates
+      // sessions on every reconnect backoff tick). Mark it terminal instead;
+      // it re-arms automatically on the next renderer.
+      const status = (error as { status?: number } | null)?.status
+
+      if (status === 401 || status === 403) {
+        return
+      }
+
       // Transient failure: re-arm so the next enumeration retries.
       attemptedScopes.delete(key)
     })
