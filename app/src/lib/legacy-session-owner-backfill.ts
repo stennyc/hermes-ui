@@ -32,10 +32,20 @@ import { resolveLegacyOwnerBackfillScope } from '@/lib/session-owner-stamp'
 import { $connectionsRegistry, hasRegistryTopology } from '@/store/connection-registry-state'
 
 const attemptedScopes = new Set<string>()
+// One transient-failure re-arm cycle per scope per window, not per
+// enumeration. A wedged/mid-restart backend that keeps 5xxing this POST must
+// not be re-probed on every reconnect backoff tick or turn-settle refresh —
+// that churn republishes the session stores continuously and drives the
+// tap-scheduler "Maximum update depth" loop. 30s is long enough to ride out
+// a short restart without pinning a permanently-broken scope for the whole
+// renderer lifetime.
+const COOLDOWN_MS = 30_000
+const failedScopes = new Set<string>()
 
 /** Test seam: forget which scopes were already backfilled this renderer. */
 export function resetLegacyOwnerBackfillAttempts(): void {
   attemptedScopes.clear()
+  failedScopes.clear()
 }
 
 function scopeKey(connectionId: null | string, profile: null | string): string {
@@ -101,7 +111,24 @@ export function maybeBackfillLegacySessionOwners(): void {
         return
       }
 
-      // Transient failure: re-arm so the next enumeration retries.
-      attemptedScopes.delete(key)
+      // Transient failure: re-arm so the next enumeration retries — but with a
+      // cooldown, not immediately. The enumerations that trigger this call
+      // (refreshSessions on every reconnect backoff tick, turn-settle refreshes,
+      // gateway-switch re-adoptions) run every few seconds while a backend is
+      // wedged/mid-restart; re-arming with zero backoff turns one transient
+      // 5xx/timeout into a request storm that republishes the session stores on
+      // every tick, which in turn drives the tap-scheduler "Maximum update
+      // depth" loop. Re-try only once per COOLDOWN_MS; a still-failing scope
+      // keeps quiet (marked attempted) instead of re-firing every enumeration.
+      if (failedScopes.has(key)) {
+        return
+      }
+
+      failedScopes.add(key)
+
+      setTimeout(() => {
+        failedScopes.delete(key)
+        attemptedScopes.delete(key)
+      }, COOLDOWN_MS).unref?.()
     })
 }

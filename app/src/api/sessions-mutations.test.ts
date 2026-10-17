@@ -8,9 +8,11 @@ vi.mock('./client', async importOriginal => ({
   ...await importOriginal<typeof ClientApi>(), hermesApi: vi.fn()
 }))
 import { hermesApi, setApiRequestConnection, setApiRequestProfile } from './client'
-import { deleteSession, renameSession, setSessionArchived, setSessionPinnedRemote, setSessionUnreadRemote } from './sessions'
+import { deleteSession, renameSession, resetMutationSnapshotRouteCapability, setSessionArchived, setSessionPinnedRemote, setSessionUnreadRemote } from './sessions'
 
-beforeEach(() => { vi.mocked(hermesApi).mockReset(); setApiRequestConnection('owner'); setApiRequestProfile('work') })
+// Per-connection capability caches ride module state; a fresh it-block means
+// a fresh host from the test's point of view, so clear them with the mock.
+beforeEach(() => { vi.mocked(hermesApi).mockReset(); resetMutationSnapshotRouteCapability(); setApiRequestConnection('owner'); setApiRequestProfile('work') })
 
 it('concurrent equal sidebar edits share the missing-snapshot verdict on older standalone servers', async () => {
   vi.mocked(hermesApi).mockImplementation(async request => {
@@ -122,6 +124,7 @@ it('sidebar edits fall back to the base write only when the backend lacks the fe
   for (const refusal of ['404: {"detail":"Profile \'work\' does not exist."}', '403: permission_denied',
     '503: {"detail":"session_authority_unavailable"}', 'Request timed out']) {
     writes.length = 0
+    resetMutationSnapshotRouteCapability()
     vi.mocked(hermesApi).mockReset().mockImplementation(async request => {
       if (!request.method || request.method === 'GET') { throw new Error(refusal) }
       writes.push(request as never)
@@ -156,6 +159,7 @@ it('sidebar edits on an older headless serve fall back to the base write', async
 
   // FastAPI's bare 404 is no route verdict: it keeps the fenced path and writes nothing.
   writes.length = 0
+  resetMutationSnapshotRouteCapability()
   vi.mocked(hermesApi).mockReset().mockImplementation(async request => {
     if (!request.method || request.method === 'GET') { throw new Error('404: {"detail":"Not Found"}') }
     writes.push(request as never)

@@ -1,7 +1,7 @@
 import { atom } from 'nanostores'
 
 import { resetLiveRuntimeTracking } from '@/app/contrib/hooks/use-background-sync'
-import { resetSidebarBatchCapability } from '@/hermes'
+import { resetSidebarBatchCapability, resetMutationSnapshotRouteCapability } from '@/hermes'
 import { invalidateProfileScopedQueries } from '@/lib/query-client'
 import { clearArtifactRegistry } from '@/store/artifacts'
 import { invalidateCronJobsRequests, setCronJobs } from '@/store/cron'
@@ -189,6 +189,9 @@ export function wipeSessionListsForGatewaySwitch(): void {
   // The next backend is a different runtime — don't carry the old one's
   // "batched sidebar endpoint missing" capability verdict across the switch.
   resetSidebarBatchCapability()
+  // Same version-skew rule for the session-edit CAS capability: the old
+  // backend's "route missing" verdict must not gate the freshly dialed one.
+  resetMutationSnapshotRouteCapability()
   // Strand any in-flight /api/profiles fetch from the PREVIOUS backend. The
   // rail's $profiles cache is deliberately NOT wiped (an empty list flickers
   // the rail away), but a late response from the old backend must not

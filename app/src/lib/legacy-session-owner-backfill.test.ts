@@ -42,8 +42,32 @@ describe('maybeBackfillLegacySessionOwners (one-shot per scope)', () => {
   })
 
   it('re-arms the scope after a transient failure so the next enumeration retries', async () => {
-    api.mockRejectedValue(new Error('503: {"detail":"storage_unavailable"}'))
-    expect(await enumerateTwice()).toBe(2)
+    vi.useFakeTimers()
+    try {
+      const { maybeBackfillLegacySessionOwners } = await import('./legacy-session-owner-backfill')
+      api.mockRejectedValue(new Error('503: {"detail":"storage_unavailable"}'))
+      // Within the 30s transient-failure cooldown a still-failing scope stays
+      // quiet: a second enumeration must NOT re-fire (that re-arm storm is what
+      // drove the "Maximum update depth" loop). Only after the cooldown does the
+      // next enumeration retry — exactly one re-arm cycle per window.
+      maybeBackfillLegacySessionOwners()
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(api.mock.calls.length).toBe(1)
+
+      maybeBackfillLegacySessionOwners()
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(api.mock.calls.length).toBe(1)
+
+      vi.advanceTimersByTime(30_000)
+      maybeBackfillLegacySessionOwners()
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(api.mock.calls.length).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

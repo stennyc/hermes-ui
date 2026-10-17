@@ -376,6 +376,37 @@ const runSessionMutation = createSessionMutationClient()
 
 class MissingMutationSnapshotRoute extends Error {}
 
+// The CAS snapshot route is a backend capability: an older standalone host
+// (a bare `hermes dashboard` that predates it) 404s the read and the fenced
+// path downgrades to the base write. That is the version-skew contract above.
+// A newer UI meeting an older backend re-issues that doomed read on every
+// sidebar edit / session sweep, and the browser paints each one as a red
+// console 404. Latch the verdict per backend scope (connection + profile),
+// mirroring `sidebarBatchEndpointMissing`: the first probe stays; once a
+// scope is known to lack the route, every later edit of that scope skips the
+// doomed read and goes straight to the base write. A fresh re-home reloads the
+// window and clears the latch; a soft gateway switch re-dials in place, so
+// `wipeSessionListsForGatewaySwitch` clears it (the next backend may well have
+// the route) — a per-scope latch means a second, newer backend is not wrongly
+// gated by the first one's verdict.
+const mutationSnapshotRouteMissing = new Map<string, boolean>()
+
+function mutationScopeKey(key: string): string {
+  // The mutation key is `[scope, id, ...]`; the CAS route lives on the backend
+  // that serves the scope (its connection + profile), not the session.
+  try {
+    const parsed = JSON.parse(key)
+
+    return Array.isArray(parsed) ? JSON.stringify(parsed[0] ?? null) : key
+  } catch {
+    return key
+  }
+}
+
+export function resetMutationSnapshotRouteCapability(): void {
+  mutationSnapshotRouteMissing.clear()
+}
+
 /** Run one fenced session edit. The fencing protocol is a backend capability: an older
  *  standalone runtime has no snapshot route and keeps its base write. Only that route-level
  *  verdict on the read, before any write was attempted, selects it; a session/profile 404,
@@ -383,6 +414,15 @@ class MissingMutationSnapshotRoute extends Error {}
  *  identity. */
 export function mutateSessionFenced<T>(key: string, read: () => Promise<SessionMutationSnapshot>,
   send: (identity: Partial<SessionMutationIdentity>) => Promise<T>): Promise<T> {
+  const scopeKey = mutationScopeKey(key)
+
+  // A scope already proven to lack the CAS route never re-probes it: no doomed
+  // read, no red 404 — straight to the base write. Unknown scopes probe once;
+  // the verdict then latches per scope, so a second, newer backend still probes.
+  if (mutationSnapshotRouteMissing.get(scopeKey)) {
+    return send({})
+  }
+
   return runSessionMutation(key, () => read().catch(error => {
     // The prepared read is shared by equal concurrent edits; its verdict must
     // travel with that rejection, rather than one caller's local closure.
@@ -390,6 +430,8 @@ export function mutateSessionFenced<T>(key: string, read: () => Promise<SessionM
     throw error
   }), send).catch(error => {
     if (!(error instanceof MissingMutationSnapshotRoute)) { throw error }
+
+    mutationSnapshotRouteMissing.set(scopeKey, true)
 
     return send({})
   })
