@@ -1439,18 +1439,50 @@ export function useBackgroundSync({
   // Keep the cron-jobs section live without a user action (scheduler ticks in
   // the background). cron.changed (jobs.json moved: CRUD or a scheduler tick's
   // bookkeeping) drives the refresh; the visible poll is the backstop.
+  //
+  // 401/403 breaker: once /api/cron/jobs answers unauthenticated the session
+  // is dead and the poll + focus/visibilitycatch-up handlers keep firing a 401
+  // on every tick. recordCronAuthFailure() arms the breaker on a 401/403 and
+  // the poll stops re-firing until a successful 200 clears it (session
+  // restored) or the effect re-runs on a gatewayState change (fresh
+  // connection). Mirrors the profileAuthFailed breaker in store/profile.ts —
+  // same "401/403 is terminal, not transient" rule, local to this effect
+  // because cron has its own store and no shared flag.
+  function isAuthError(error: unknown): boolean {
+    const status = (error as { status?: number } | null)?.status
+    return status === 401 || status === 403
+  }
+
   useEffect(() => {
     if (gatewayState !== 'open') {
       return
     }
 
+    let cronAuthFailed = false
+
+    const pollCron = () => {
+      if (cronAuthFailed) {
+        return
+      }
+
+      void Promise.resolve(refreshCronJobs()).then((result) => {
+        const res = result as { refreshError?: unknown } | null
+        if (res?.refreshError != null && isAuthError(res.refreshError)) {
+          cronAuthFailed = true
+          console.error('[cron] refreshCronJobs: 401/403 (session expired) — stopping background poll until re-login or gateway switch:', (res.refreshError as Error).message ?? res.refreshError)
+        } else if (res?.refreshError == null) {
+          cronAuthFailed = false
+        }
+      })
+    }
+
     if (cronChangeTick > 0) {
-      void refreshCronJobs()
+      pollCron()
     }
 
     return visiblePoll(
       changeEventsAvailable ? CRON_BACKSTOP_INTERVAL_MS : CRON_POLL_INTERVAL_MS,
-      () => void refreshCronJobs()
+      pollCron
     )
   }, [changeEventsAvailable, cronChangeTick, gatewayState, refreshCronJobs])
 
