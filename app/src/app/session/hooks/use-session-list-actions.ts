@@ -174,6 +174,14 @@ export function useSessionListActions({ profileScope }: UseSessionListActionsArg
   const refreshMessagingSessionsRequestRef = useRef(0)
   const refreshSessionsRequestRef = useRef(0)
 
+  // 401/403 breaker: the sidebar's session list is re-pulled on every reconnect
+  // backstop + turn-settle while the SPA is alive. Once the session dies
+  // (dashboard restart, cookie cleared) those re-pulls 401 forever — the
+  // list is stale but the user sees a sign-in prompt, not a broken list.
+  // Terminal, like the profile/cron breakers: arm on first auth failure,
+  // skip every subsequent refresh until a 200 proves the session is back.
+  const sessionsAuthFailedRef = useRef(false)
+
   useLayoutEffect(() => {
     profileScopeRef.current = profileScope
   }, [profileScope])
@@ -330,6 +338,15 @@ export function useSessionListActions({ profileScope }: UseSessionListActionsArg
         return
       }
 
+      // Terminal auth failure already recorded: re-pulling the session list is
+      // guaranteed to 401 again (the cookie/token is dead, not the backend).
+      // Serve the stale list; reconnect backstops + turn-settles stop burning
+      // /api/profiles/sessions 401s on every trigger until a re-login or
+      // gateway switch lands a 200 that clears the flag below.
+      if (sessionsAuthFailedRef.current) {
+        return
+      }
+
       const requestId = refreshSessionsRequestRef.current + 1
       refreshSessionsRequestRef.current = requestId
       // The loading flag exists to drive the initial skeletons (they only render
@@ -381,6 +398,10 @@ export function useSessionListActions({ profileScope }: UseSessionListActionsArg
 
         let activationEpoch = gatewayActivationEpoch()
         let result = await fetchPage()
+
+        // A 200 proves the session is alive again: clear the breaker so the
+        // next transient failure (backend not up yet) still refreshes.
+        sessionsAuthFailedRef.current = false
 
         // A gateway activation that landed mid-request voids this page: it may
         // describe the source the window just left. But every activation bumps
@@ -498,6 +519,15 @@ export function useSessionListActions({ profileScope }: UseSessionListActionsArg
           )
         }
       } catch (error) {
+        // 401/403 is terminal (dead session, not a transient backend hiccup):
+        // arm the breaker so reconnect backstops / turn-settles stop re-pulling
+        // /api/profiles/sessions every trigger. Mirrors the profile/cron
+        // breakers; a re-login or gateway switch's first 200 clears it.
+        const status = (error as { status?: number } | null)?.status
+        if (status === 401 || status === 403) {
+          sessionsAuthFailedRef.current = true
+        }
+
         if (owns() && showLoading) {
           setSessionsLoadError(true)
         }
