@@ -79,7 +79,29 @@ export async function resolveGatewayWsUrl(deps: ResolveGatewayWsUrlDeps, conn: G
   }
 
   if (mint) {
-    const fresh = await mint(profile).catch(() => null)
+    // Mint failures (401/403 -> needsOauthLogin) must NOT be swallowed into
+    // the cached conn.wsUrl: the cached ticket is dead, and falling back to
+    // it re-arms the reconnect backoff into an endless 401/mint storm.
+    // Surface the auth failure so the boot loop's reauth circuit breaker can
+    // stop retrying (mirrors the oauth branch above).
+    const fresh = await mint(profile)
+      .then(
+        (result: string | GatewayWsUrlResult) => result,
+        (error: unknown) => {
+          if (isGatewayReauthRequired(error)) {
+            throw error
+          }
+
+          return null
+        }
+      )
+      .catch((error: unknown) => {
+        if (error instanceof GatewayReauthRequiredError) {
+          throw error
+        }
+
+        return null
+      })
 
     if (typeof fresh === 'string') {
       return fresh
