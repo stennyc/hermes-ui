@@ -434,28 +434,48 @@ export function ChatRuntimeBoundary({
     [expandWindow, olderAvailable, revealRow, returnToLatest, currentMessages, isHistorical, newerAvailable]
   )
 
-  const runtime = useIncrementalExternalStoreRuntime<ThreadMessage>({
-    messageRepository: runtimeMessageRepository,
-    isRunning: !isHistorical && busy,
-    isDisabled: isHistorical,
-    setMessages: isHistorical ? undefined : onThreadMessagesChange,
-    onNew: async () => {
-      // Submission is handled explicitly by ChatBar.
-      // Keeping this no-op avoids duplicate prompt.submit calls.
-    },
-    // Editing stays AVAILABLE on a history page. `isDisabled` above blocks
-    // submit/reload/branch and keeps the page static, but the rail jump is
-    // the only way into that page and it has no in-thread exit — so dropping
-    // `onEdit` left the inline composer unopenable after ANY far rail jump
-    // (the throw "Runtime does not support editing", infectious downward,
-    // healed only by the floating jump button's returnToLatest). `editMessage`
-    // already resolves its target against the live session store
-    // (use-prompt-actions), never the display page, so the edit is correct;
-    // sending one rewinds the live transcript and drops the page.
-    onEdit,
-    onCancel: isHistorical ? undefined : async () => onCancel(),
-    onReload: isHistorical ? undefined : onReload
-  })
+  // Memo the adapter literal so its identity only moves when a field actually
+  // changed. `useIncrementalExternalStoreRuntime` re-runs its setAdapter
+  // effect on every render (the store arg is a dep), and each setAdapter walk
+  // that enters the full path re-enters the content gate and can re-notify
+  // subscribers; under streaming that notify re-renders the boundary, which
+  // builds a FRESH literal, which re-runs the effect — an unbounded
+  // render→setAdapter→notify loop the tap guard kills with "Maximum update
+  // depth exceeded". d871bd5's home-only browser check missed this: it never
+  // ran a live streaming turn. The content-aware gate in
+  // `__internal_setAdapter` only stops the notify when the FULL path is not
+  // entered, and the full path is entered whenever the repository REF moves —
+  // which happens every time this literal (and its effect) re-runs. Holding
+  // the literal ref-stable across no-field-change renders is what keeps
+  // streaming's per-token notify a SINGLE legitimate update instead of a
+  // self-sustaining loop.
+  const runtime = useIncrementalExternalStoreRuntime<ThreadMessage>(
+    useMemo(
+      () => ({
+        messageRepository: runtimeMessageRepository,
+        isRunning: !isHistorical && busy,
+        isDisabled: isHistorical,
+        setMessages: isHistorical ? undefined : onThreadMessagesChange,
+        onNew: async () => {
+          // Submission is handled explicitly by ChatBar.
+          // Keeping this no-op avoids duplicate prompt.submit calls.
+        },
+        // Editing stays AVAILABLE on a history page. `isDisabled` above blocks
+        // submit/reload/branch and keeps the page static, but the rail jump is
+        // the only way into that page and it has no in-thread exit — so
+        // dropping `onEdit` left the inline composer unopenable after ANY far
+        // rail jump (the throw "Runtime does not support editing", infectious
+        // downward, healed only by the floating jump button's returnToLatest).
+        // `editMessage` already resolves its target against the live session
+        // store (use-prompt-actions), never the display page, so the edit is
+        // correct; sending one rewinds the live transcript and drops the page.
+        onEdit,
+        onCancel: isHistorical ? undefined : async () => onCancel(),
+        onReload: isHistorical ? undefined : onReload
+      }),
+      [runtimeMessageRepository, busy, isHistorical, onThreadMessagesChange, onEdit, onCancel, onReload]
+    )
+  )
 
   return (
     <ComposerScopeProvider value={composerScope}>
