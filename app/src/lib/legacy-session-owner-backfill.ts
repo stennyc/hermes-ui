@@ -27,7 +27,7 @@
  * will keep refusing.
  */
 import { getApiRequestConnection, hermesApi } from '@/api/client'
-import { isMissingRestEndpoint, isOfflineMaintenance } from '@/lib/gateway-rpc'
+import { isMissingRestEndpoint, isOfflineMaintenance, isHttpConflict } from '@/lib/gateway-rpc'
 import { resolveLegacyOwnerBackfillScope } from '@/lib/session-owner-stamp'
 import { $connectionsRegistry, hasRegistryTopology } from '@/store/connection-registry-state'
 
@@ -97,7 +97,7 @@ export function maybeBackfillLegacySessionOwners(): void {
       // Terminal for this scope: version skew (no endpoint) or the owning
       // gateway's 409 maintenance refusal. Keep the scope marked so we don't
       // re-probe a route that will answer the same way every refresh.
-      if (isMissingRestEndpoint(error) || isOfflineMaintenance(error)) {
+      if (isMissingRestEndpoint(error) || isOfflineMaintenance(error) || isHttpConflict(error)) {
         return
       }
 

@@ -68,6 +68,18 @@ export function isOfflineMaintenance(error: unknown): boolean {
   return /(?:^\s*|error:\s*)409:/i.test(message)
 }
 
+/**
+ * Status-field twin of isOfflineMaintenance: the Electron IPC bridge's error
+ * contract carries no reliable status field, but the web/Capacitor REST bridge
+ * (web-bridge/bridge.ts) attaches one (`error.status`) with a plain
+ * "${status}: ${text}" message that the anchored-message regex above does not
+ * catch. A 409 is the owning gateway's steady-state refusal — terminal for
+ * this renderer lifetime — so route it to the same terminal branch callers
+ * already use for isOfflineMaintenance. */
+export function isHttpConflict(error: unknown): boolean {
+  return (error as { status?: unknown } | null)?.status === 409
+}
+
 /** True when a prompt response raced a backend-side timeout / completion. */
 export function isMissingPendingPromptRequest(error: unknown, key: string): boolean {
   const message = error instanceof Error ? error.message : String(error)
