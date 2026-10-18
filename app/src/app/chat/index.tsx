@@ -286,7 +286,14 @@ export function ChatRuntimeBoundary({
       parentScope.profile || !ownerProfile
         ? parentScope
         : { ...parentScope, connectionId: ownerConnection || undefined, profile: ownerProfile },
-    [ownerConnection, ownerProfile, parentScope]
+    // parentScope (the context value) is a FRESH object every render of the
+    // tile's boundary — listing it defeats the memo and the provider below
+    // re-commits the whole workspace subtree per frame (the "Maximum update
+    // depth" loop). The only field this branch adds is the Bot owner's
+    // (connection, profile); key on those two scalars so the object is rebuilt
+    // only when the owner actually moves, and read the base atoms from the
+    // latest parentScope at construction time (they are stable module atoms).
+    [ownerConnection, ownerProfile, parentScope.profile, parentScope.$messages, parentScope.$awaitingInput, parentScope.attachments, parentScope.target]
   )
 
   const history = useHistoryWindow({
@@ -434,28 +441,67 @@ export function ChatRuntimeBoundary({
     [expandWindow, olderAvailable, revealRow, returnToLatest, currentMessages, isHistorical, newerAvailable]
   )
 
-  const runtime = useIncrementalExternalStoreRuntime<ThreadMessage>({
-    messageRepository: runtimeMessageRepository,
-    isRunning: !isHistorical && busy,
-    isDisabled: isHistorical,
-    setMessages: isHistorical ? undefined : onThreadMessagesChange,
-    onNew: async () => {
-      // Submission is handled explicitly by ChatBar.
-      // Keeping this no-op avoids duplicate prompt.submit calls.
-    },
-    // Editing stays AVAILABLE on a history page. `isDisabled` above blocks
-    // submit/reload/branch and keeps the page static, but the rail jump is
-    // the only way into that page and it has no in-thread exit — so dropping
-    // `onEdit` left the inline composer unopenable after ANY far rail jump
-    // (the throw "Runtime does not support editing", infectious downward,
-    // healed only by the floating jump button's returnToLatest). `editMessage`
-    // already resolves its target against the live session store
-    // (use-prompt-actions), never the display page, so the edit is correct;
-    // sending one rewinds the live transcript and drops the page.
+  // ③-b: memoize the adapter literal. `useIncrementalExternalStoreRuntime`'s
+  // `useEffect([runtime, store])` fires on every render because the literal is
+  // freshly allocated each time — `onNew`/`onCancel` closures + the
+  // `isHistorical`-conditional branches produce new `newCapabilities` every
+  // render, so `__internal_setAdapter` sets `changed=true` and re-notifies →
+  // subscriber re-renders → new literal → notify again: the unbounded
+  // "Maximum update depth exceeded" feedback loop.
+  //
+  // The deps here must all be STABLE references for the memo to actually
+  // survive a render. `onCancel`/`onEdit`/`onReload`/`onThreadMessagesChange`
+  // arrive as plain props and their caller does NOT guarantee a stable
+  // identity per render, so we read them through a ref: the memo deps stay
+  // primitive/known-stable, and the literal's function fields close over the
+  // ref (always calling the latest callback). This keeps `self._store ===
+  // store` true across re-renders that don't change the observable surface,
+  // which is the gate that actually breaks the loop.
+  const latestCallbacksRef = useRef({
+    onCancel,
     onEdit,
-    onCancel: isHistorical ? undefined : async () => onCancel(),
-    onReload: isHistorical ? undefined : onReload
+    onReload,
+    onThreadMessagesChange
   })
+  latestCallbacksRef.current = {
+    onCancel,
+    onEdit,
+    onReload,
+    onThreadMessagesChange
+  }
+
+  const storeAdapter = useMemo(() => {
+    const cb = () => latestCallbacksRef.current
+    return {
+      messageRepository: runtimeMessageRepository,
+      isRunning: !isHistorical && busy,
+      isDisabled: isHistorical,
+      setMessages: isHistorical ? undefined : cb().onThreadMessagesChange,
+      onNew: async () => {
+        // Submission is handled explicitly by ChatBar.
+        // Keeping this no-op avoids duplicate prompt.submit calls.
+      },
+      // Editing stays AVAILABLE on a history page. `isDisabled` above blocks
+      // submit/reload/branch and keeps the page static, but the rail jump is
+      // the only way into that page and it has no in-thread exit — so dropping
+      // `onEdit` left the inline composer unopenable after ANY far rail jump
+      // (the throw "Runtime does not support editing", infectious downward,
+      // healed only by the floating jump button's returnToLatest). `editMessage`
+      // already resolves its target against the live session store
+      // (use-prompt-actions), never the display page, so the edit is correct;
+      // sending one rewinds the live transcript and drops the page.
+      onEdit: cb().onEdit,
+      onCancel: isHistorical ? undefined : async () => cb().onCancel(),
+      onReload: isHistorical ? undefined : cb().onReload
+    }
+    // runtimeMessageRepository: stable ref from useSet-upChatView; busy /
+    // isHistorical are primitives; the callback closures ride latestCallbacksRef
+    // so they intentionally do NOT appear in deps (avoiding the re-memo churn
+    // that is the whole point of this fix).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runtimeMessageRepository, busy, isHistorical])
+
+  const runtime = useIncrementalExternalStoreRuntime<ThreadMessage>(storeAdapter)
 
   return (
     <ComposerScopeProvider value={composerScope}>

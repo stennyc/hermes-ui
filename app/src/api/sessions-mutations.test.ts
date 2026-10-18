@@ -8,7 +8,7 @@ vi.mock('./client', async importOriginal => ({
   ...await importOriginal<typeof ClientApi>(), hermesApi: vi.fn()
 }))
 import { hermesApi, setApiRequestConnection, setApiRequestProfile } from './client'
-import { deleteSession, renameSession, resetMutationSnapshotRouteCapability, setSessionArchived, setSessionPinnedRemote, setSessionUnreadRemote } from './sessions'
+import { deleteSession, mutateSessionFenced, renameSession, resetMutationSnapshotRouteCapability, setSessionArchived, setSessionPinnedRemote, setSessionUnreadRemote } from './sessions'
 
 // Per-connection capability caches ride module state; a fresh it-block means
 // a fresh host from the test's point of view, so clear them with the mock.
@@ -168,4 +168,56 @@ it('sidebar edits on an older headless serve fall back to the base write', async
   })
   await expect(renameSession('ssh', 'name', 'work')).rejects.toThrow('Not Found')
   expect(writes).toEqual([])
+})
+
+// The latch must recognize the same backend across differing scope-object
+// shapes: setPersistedSessionHidden rebuilds scope on every call, so the
+// serialized key's scope half drifts between no-connectionId-tag,
+// connectionId:null, and connectionId:'server'. The old latch keyed on the
+// raw JSON scope, so two shapes of the SAME backend produced two keys and the
+// route-missing verdict never latched — every clear-cache retry re-probed and
+// re-404'd. The fix: normalize the latch key to the two scalars that
+// identify the backend (connectionId ?? '' plus profile ?? ''), so all three
+// shapes share one key.
+it('latches the route-missing verdict across differing scope shapes of the same backend', async () => {
+  const routeMissing = '404: {"detail":"No such API endpoint: /api/sessions/drift/mutation-snapshot"}'
+  let probes = 0
+
+  const read = () => { probes += 1; return Promise.reject(new Error(routeMissing)) }
+  const send = async (_identity: { [k: string]: unknown }) => ({ ok: true })
+
+  const probeKey = (connectionId: null | string, profile: string): string => {
+    const scope: Record<string, string | null> = { profile }
+    if (connectionId !== null) { scope.connectionId = connectionId }
+
+    return JSON.stringify([scope, 'drift', 'PATCH', {}])
+  }
+
+  vi.mocked(hermesApi).mockReset()
+  vi.mocked(hermesApi).mockImplementation(async request => {
+    if (!request.method || request.method === 'GET') {
+      throw new Error(routeMissing)
+    }
+
+    return { ok: true } as never
+  })
+
+  // First call: no connectionId tag (ambient primary). One probe, verdict latches.
+  await mutateSessionFenced(probeKey(null, 'devops'), read, send)
+  expect(probes).toBe(1)
+
+  // Second call: explicit connectionId:null — SAME backend, drifted shape.
+  // Pre-fix this was a different key → re-probed (404 storm). Post-fix it
+  // latches under the same backend key → no new probe.
+  await mutateSessionFenced(probeKey(null, 'devops'), read, send)
+  expect(probes).toBe(1)
+
+  // Third call: tagged connectionId 'server' is a DIFFERENT backend, so it
+  // must probe once on its own — the latch must not gate a second backend.
+  await mutateSessionFenced(probeKey('server', 'devops'), read, send)
+  expect(probes).toBe(2)
+
+  // And that second backend now latches too: same tagged shape does not re-probe.
+  await mutateSessionFenced(probeKey('server', 'devops'), read, send)
+  expect(probes).toBe(2)
 })

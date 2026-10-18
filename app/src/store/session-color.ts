@@ -2,6 +2,7 @@ import { computed } from 'nanostores'
 
 import { sessionProjectColor } from '@/app/chat/sidebar/projects/workspace-groups'
 import { Codecs, persistentAtom } from '@/lib/persisted'
+import { stableRecord } from '@/lib/stable-array'
 import { $projectOwnerBySessionId, $projects } from '@/store/projects'
 import { $sessions, sessionPinId } from '@/store/session'
 import type { ProjectInfo, SessionInfo } from '@/types/hermes'
@@ -48,6 +49,8 @@ function resolveSessionColor(
   return overrides[sessionPinId(session)] ?? sessionProjectColor(session, projects, owners) ?? undefined
 }
 
+let prevColorMap: Record<string, string> = {}
+
 export const $sessionColorById = computed(
   [$sessions, $projects, $sessionColorOverrides, $projectOwnerBySessionId],
   (sessions, projects, overrides, owners) => {
@@ -61,7 +64,14 @@ export const $sessionColorById = computed(
       }
     }
 
-    return map
+    // Reference-stable on no-op: the 4 inputs republish constantly while a
+    // history session loads (owner resolution re-stamps rows one by one), but
+    // the COLORS rarely move. Returning a fresh map per recompute handed every
+    // mounted SessionStatusDot a new snapshot ref → useStore re-render → the
+    // workspace's unbounded "Maximum update depth" loop. Keep the previous map
+    // when the content is element-identical, exactly like
+    // $sessionDotStateById/$statusItemsBySession in the same family.
+    return (prevColorMap = stableRecord(prevColorMap, map))
   }
 )
 

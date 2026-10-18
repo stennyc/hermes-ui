@@ -55,6 +55,20 @@ describe('$sessionColorById', () => {
     $projects.set([makeProject('p_app', ['/www/app'], '#7bc86c')])
     expect($sessionColorById.get()[a.id]).toBe('#7bc86c')
   })
+
+  it('keeps the previous map reference when a recompute yields identical colors (no-op snapshot)', () => {
+    const a = makeCwdSession('/www/app', { git_repo_root: '/www/app' })
+    $projects.set([makeProject('p_app', ['/www/app'], '#4a9eff')])
+    $sessions.set([a])
+
+    const first = $sessionColorById.get()
+
+    // A new $sessions array carrying the SAME rows/content: the color map must
+    // keep its reference so useStore subscribers bail out (the "Maximum update
+    // depth" loop ran exactly when this map churned its ref on re-enumeration).
+    $sessions.set([{ ...a }])
+    expect($sessionColorById.get()).toBe(first)
+  })
 })
 
 describe('$sessionColorOverrides', () => {

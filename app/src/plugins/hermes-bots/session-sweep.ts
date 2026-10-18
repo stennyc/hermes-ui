@@ -167,15 +167,23 @@ function hideOwnedBotSessions() {
   // share ids) — hide each (owner, id) pair exactly once.
   const rooms = [...new Map(roomEntries.map(entry => [entry.dedupe, entry])).values()]
 
-  const known = Promise.all(
-    rooms.map(entry =>
-      hidePersistedBotSession(entry.owner, entry.id).catch(error => {
+  // Serial per-room: the concurrent Promise.all fires one setPersistedSessionHidden
+  // PATCH per room seat in a single burst — the same markDirty saturation the
+  // profile sweep above now avoids. Room seats are few (a handful of group chats,
+  // each with a small member list), so serial cost is bounded and the sweep's
+  // idempotent nature (already-hidden rows are no-ops server-side) means we
+  // lose nothing by awaiting each before the next starts.
+  const known = (async () => {
+    for (const entry of rooms) {
+      try {
+        await hidePersistedBotSession(entry.owner, entry.id)
+      } catch (error) {
         if (isMissingPersistedSessionError(error)) {
           pruneMissingRoomSession(entry)
         }
-      })
-    )
-  )
+      }
+    }
+  })()
 
   return Promise.all([known, sweepBotProfileSessions().catch(() => undefined)])
 }
@@ -321,32 +329,47 @@ async function sweepBotProfileSessions(nowSeconds = Date.now() / 1000) {
     }
   }
 
-  await Promise.all(
-    roster.map(async (bot: RosterRow) => {
-      const name = String(bot?.name || '').trim()
+  // Serial per-bot loop: a concurrent Promise.all fires N profile × M session
+  // setPersistedSessionHidden write-backs in one burst. Each PATCH triggers
+  // `markDirty` on global stores ($sessionStates / $sessionTiles / $messages),
+  // which re-renders every `useSyncExternalStore` subscriber, which passes a
+  // fresh adapter literal into `useIncrementalExternalStoreRuntime`, which
+  // calls `__internal_setAdapter` → `_notifySubscribers` → `markDirty` again.
+  // The render-feedback-loop guard in the incremental runtime only silences
+  // no-op swaps; a genuine burst of write-backs is NOT a no-op and still
+  // saturates the `unstable_scheduleCallback` queue, killing the session
+  // tile with "Maximum update depth exceeded". Running bots serially keeps
+  // at most one write-back in flight, so the next one is already absorbed
+  // by the time it lands — no burst, no loop.
+  for (const bot of roster) {
+    const name = String(bot?.name || '').trim()
 
-      if (!name) {
-        return
+    if (!name) {
+      continue
+    }
+
+    try {
+      const route = botConnectionRoute(bot)
+      const profile = backendTargetProfile(route, name)
+
+      const res = await host.listPersistedSessions(route, {
+        profile,
+        limit: PROFILE_SESSION_LIST_LIMIT
+      })
+
+      const rows = Array.isArray(res?.sessions) ? res.sessions : []
+      // Also serial within a profile: hidePersistedBotSession for session A
+      // must complete before B's PATCH starts, so their markDirty wakes
+      // don't queue up. A single profile's sweep candidates are few (the
+      // 5-minute title filter already drops everything that isn't a stale
+      // Bot-Chat / Agent Inbox / Group: row), so the serial cost is bounded.
+      for (const row of rows) {
+        if (isBotModeSweepCandidate(row, nowSeconds)) {
+          await hidePersistedBotSession(bot, row.id, profile).catch(() => undefined)
+        }
       }
-
-      try {
-        const route = botConnectionRoute(bot)
-        const profile = backendTargetProfile(route, name)
-
-        const res = await host.listPersistedSessions(route, {
-          profile,
-          limit: PROFILE_SESSION_LIST_LIMIT
-        })
-
-        const rows = Array.isArray(res?.sessions) ? res.sessions : []
-        await Promise.all(
-          rows
-            .filter(row => isBotModeSweepCandidate(row, nowSeconds))
-            .map(row => Promise.resolve(hidePersistedBotSession(bot, row.id, profile)).catch(() => undefined))
-        )
-      } catch {
-        /* older gateway / unreachable source — leave this profile alone */
-      }
-    })
-  )
+    } catch {
+      /* older gateway / unreachable source — leave this profile alone */
+    }
+  }
 }

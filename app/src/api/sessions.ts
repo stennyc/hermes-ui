@@ -394,10 +394,26 @@ const mutationSnapshotRouteMissing = new Map<string, boolean>()
 function mutationScopeKey(key: string): string {
   // The mutation key is `[scope, id, ...]`; the CAS route lives on the backend
   // that serves the scope (its connection + profile), not the session.
+  //
+  // Normalize to the two SCALARS that identify the route owner, never the raw
+  // scope object. The scope object is rebuilt on every call (setPersistedSessionHidden
+  // re-derives connectionId from the live request scope), so its JSON form drifts:
+  // `connectionId` is `null` under one caller, absent under another, and
+  // `JSON.stringify` emits `{"connectionId":null,...}` vs `{...}` — two different
+  // keys for the SAME backend. A drift-latched Map then never matches the 404's
+  // verdict and re-probes forever. Scalars are total: `?? ''` folds null/undefined/
+  // absent into one token, so the verdict latches across every scope shape of the
+  // same backend.
   try {
     const parsed = JSON.parse(key)
 
-    return Array.isArray(parsed) ? JSON.stringify(parsed[0] ?? null) : key
+    if (!Array.isArray(parsed)) {
+      return key
+    }
+
+    const scope = (parsed[0] ?? {}) as { connectionId?: null | string; profile?: null | string }
+
+    return `${scope.connectionId ?? ''}::${scope.profile ?? ''}`
   } catch {
     return key
   }

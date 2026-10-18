@@ -283,4 +283,42 @@ describe('the title half: each roster bot’s own profile listing', () => {
 
     expect(hiddenCalls().map(([, options]) => options.sessionId)).toEqual(['room-core-a'])
   })
+
+  it('serializes the title-half hides: no two setPersistedSessionHidden are in flight at once', async () => {
+    // ③-a: N roster bots × per-bot hides must not fire concurrently. The
+    // unserialized Promise.all fan-out is what re-publishes the session store
+    // N times in one tick and drives the nanostores getSnapshot feedback loop
+    // ("Maximum update depth exceeded"). Prove the sweep drives them one at a
+    // time: hold each hide open, and it may only advance after the previous
+    // one resolved.
+    let inFlight = 0
+    let maxInFlight = 0
+    const resolvers: Array<() => void> = []
+    hostMock.setPersistedSessionHidden.mockImplementation(() => {
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      return new Promise<void>(resolve => {
+        resolvers.push(() => {
+          inFlight -= 1
+          resolve()
+        })
+      })
+    })
+
+    const { startHideSweepScheduler } = await import('./session-sweep')
+    startHideSweepScheduler({})
+
+    // The id half has no rows here; the title half hides a-1..a-8 style rows
+    // for alpha + remy. Advance the scheduler macro task, then release hides
+    // one at a time to prove they never overlap.
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(resolvers.length).toBeGreaterThan(0)
+    while (resolvers.length > 0) {
+      const release = resolvers.shift() as () => void
+      release()
+      await new Promise(resolve => setTimeout(resolve, 0))
+    }
+
+    expect(maxInFlight).toBe(1)
+  })
 })
