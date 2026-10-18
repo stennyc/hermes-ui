@@ -77,6 +77,18 @@ function profileListSource(connection: HermesConnection | null): null | string {
 }
 
 export function setActiveProfile(name: string): void {
+  // Ref gate: the gateway re-adopt / reconnect chain re-derives the SAME
+  // active profile name on every flip (default → default), and an unconditional
+  // $activeProfile.set() republishes the atom on each one. That republish feeds
+  // the useBackgroundSync / useGatewayScopeRefresh effects (their dep arrays
+  // read $activeGatewayProfile-derived values), re-running refreshActiveProfile
+  // → GET /api/profiles again — the storm visible as repeated 200s in the
+  // network panel while a flapping gateway drives the tap-scheduler
+  // "Maximum update depth exceeded" loop. Same value: no publication.
+  if (name && $activeProfile.get() === name) {
+    return
+  }
+
   $activeProfile.set(name || 'default')
 }
 
@@ -352,6 +364,22 @@ export async function switchProfile(name: string): Promise<void> {
 // eviction fallbacks (connection removal, profile delete) can never
 // leave this naming a profile the active socket no longer serves (#89206).
 export const $activeGatewayProfile = atom<string>('default')
+
+/**
+ * Ref-gated write: the registry's onActiveRouteChanged mirror and the
+ * reconnect/re-adopt chain re-derive the SAME route key (default → default) on
+ * every gateway flip. An unconditional $activeGatewayProfile.set() republishes
+ * the atom each time, which feeds the useBackgroundSync / useGatewayScopeRefresh
+ * dep arrays and re-runs refreshActiveProfile → the /api/profiles storm behind
+ * the tap-scheduler "Maximum update depth" loop. Same key: no publication.
+ */
+export function setActiveGatewayProfile(key: string): void {
+  if ($activeGatewayProfile.get() === key) {
+    return
+  }
+
+  $activeGatewayProfile.set(key)
+}
 
 // Profile for the NEXT new chat (chosen via the new-chat picker). null = primary
 // / default, so single-profile users are unaffected.
@@ -760,7 +788,7 @@ export async function ensureGatewayProfile(
         clearComposerSelectionOwner()
       }
 
-      $activeGatewayProfile.set(landed ? target : routeKey)
+      setActiveGatewayProfile(landed ? target : routeKey)
     })
   })()
 
@@ -954,7 +982,7 @@ export async function ensureGatewayAgent(
       // best-effort descriptor lookup failed. Publish it before the profile
       // atom wakes forced model reseeds or a picker can persist a selection.
       setComposerSelectionOwner(connection, target)
-      $activeGatewayProfile.set(target)
+      setActiveGatewayProfile(target)
     })
   })()
 

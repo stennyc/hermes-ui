@@ -69,7 +69,8 @@ import { notify, notifyError, RECOVERY_ACTIONS } from '@/store/notifications'
 import {
   $activeGatewayProfile,
   normalizeProfileKey,
-  refreshActiveProfile
+  refreshActiveProfile,
+  setActiveGatewayProfile
 } from '@/store/profile'
 import { requestBackendRestart } from '@/store/recovery-requests'
 import {
@@ -753,7 +754,7 @@ export function useGatewayBoot({
         }
 
         const key = normalizeProfileKey(profileKey)
-        $activeGatewayProfile.set(key)
+        setActiveGatewayProfile(key)
         setPrimaryGateway(gateway, key)
         void ensureGatewayForProfile(key)
       } catch {
@@ -761,7 +762,7 @@ export function useGatewayBoot({
           return false
         }
 
-        $activeGatewayProfile.set(normalizeProfileKey(override))
+        setActiveGatewayProfile(normalizeProfileKey(override))
       }
 
       return true
@@ -1048,12 +1049,12 @@ export function useGatewayBoot({
         const key = normalizeProfileKey(profile)
 
         if (normalizeProfileKey($activeGatewayProfile.get()) !== key) {
-          $activeGatewayProfile.set(key)
+          setActiveGatewayProfile(key)
         }
       },
       onEvent: deliverGatewayEvent,
       onActiveConnectionInvalidated: (fallbackProfile, invalidationEpoch) => {
-        $activeGatewayProfile.set(fallbackProfile)
+        setActiveGatewayProfile(fallbackProfile)
         // Bounded like every other getConnection() call in this file (#93454):
         // an eviction fallback (connection removal, profile delete)
         // must not latch the profile atom to a connection that never resolves
@@ -1629,7 +1630,7 @@ export function useGatewayBoot({
       }
 
       const profile = survivor?.profile ?? $activeGatewayProfile.get()
-      $activeGatewayProfile.set(profile)
+      setActiveGatewayProfile(profile)
       void ensureGatewayForProfile(profile)
 
       // Mirror the current (already-open) socket state into the composer so the
