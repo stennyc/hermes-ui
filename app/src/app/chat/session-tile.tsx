@@ -851,7 +851,7 @@ function useTileMenuRow(storedSessionId: string): {
     }
   }, [])
 
-  return useSyncExternalStore(subscribe, () => {
+  const getSnapshot = useCallback(() => {
     const stored = tileStoredRow(storedSessionId)
     const pinId = stored ? sessionPinId(stored) : storedSessionId
     const title = tileTitle(storedSessionId)
@@ -864,7 +864,10 @@ function useTileMenuRow(storedSessionId: string): {
     }
 
     return cache.current.value
-  })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storedSessionId])
+
+  return useSyncExternalStore(subscribe, getSnapshot)
 }
 
 /** A session TAB's context menu: the full session verb set (pin, copy id, new
