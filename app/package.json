@@ -149,5 +149,8 @@
   },
   "trustedDependencies": [
     "unicode-animations"
-  ]
+  ],
+  "overrides": {
+    "@assistant-ui/tap": "0.9.8"
+  }
 }
