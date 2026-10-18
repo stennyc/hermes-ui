@@ -46,7 +46,8 @@ import {
   publishSessionState,
   SESSION_WATCHDOG_TIMEOUT_MS,
   setLiveTurnBackend,
-  setSessionStalled
+  setSessionStalled,
+  $stalledSessionIds
 } from '@/store/session-states'
 import { loadArchivedSessions } from '@/store/sidebar-archive'
 import {
@@ -851,7 +852,16 @@ export function rehydrateLiveSessionStatuses(
       lastActiveMs > 0 &&
       nowMs - lastActiveMs >= SESSION_WATCHDOG_TIMEOUT_MS
 
-    setSessionStalled(storedSessionId, isQuiet)
+    // No-op polls must stay silent: setSessionStalled republishes the stalled
+    // ids atom whenever membership moves, and the 1.5s live-status poll kept
+    // flipping it back and forth on every tick even when nothing had actually
+    // changed, churning every downstream $sessionStates/$stalledSessionIds
+    // subscriber. Gate on the current set so only a genuine transition writes.
+    const currentlyStalled = $stalledSessionIds.get().includes(storedSessionId)
+
+    if (isQuiet !== currentlyStalled) {
+      setSessionStalled(storedSessionId, isQuiet)
+    }
   }
 
   // A runtime this profile's snapshot reported live LAST poll but not this one
