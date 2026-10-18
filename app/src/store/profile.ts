@@ -59,6 +59,37 @@ export const $activeProfile = atom<string>('default')
 const NO_PROFILES: ProfileInfo[] = []
 export const $profiles = atom<ProfileInfo[]>(NO_PROFILES)
 
+/**
+ * Content-aware equality for a profile list: two fetches that return the same
+ * profiles (same names, same order, same model/provider/env/skill fields) are
+ * interchangeable — republishing $profiles with a fresh array in that case is
+ * pure churn. (arraysEqual is string[]-typed, so it cannot be used here.)
+ */
+function profilesEqual(
+  left: readonly ProfileInfo[],
+  right: readonly ProfileInfo[]
+): boolean {
+  if (left.length !== right.length) {
+    return false
+  }
+
+  return left.every((item, index) => {
+    const other = right[index]
+    return (
+      item === other ||
+      (item.name === other.name &&
+        item.path === other.path &&
+        item.provider === other.provider &&
+        item.model === other.model &&
+        item.skill_count === other.skill_count &&
+        item.has_env === other.has_env &&
+        item.is_default === other.is_default &&
+        item.display_name === other.display_name &&
+        item.bot_title === other.bot_title)
+    )
+  })
+}
+
 // Successful lists belong to their source, not whichever gateway is active
 // when a rail renders. A re-home repaints from this cache until the incoming
 // source serves its own list, so a failed incoming read can neither borrow the
@@ -165,13 +196,31 @@ export function refreshProfiles(): Promise<ProfileInfo[]> {
         profileAuthFailed = false
 
         if (epoch === profileListEpoch) {
-          batch(() => {
-            if (source !== null) {
-              $profilesByConnection.set(new Map($profilesByConnection.get()).set(source, profiles))
-            }
+          // Ref gate: the gateway's 409 owner-backfill steady state (the owning
+          // gateway refuses every POST for this renderer's lifetime) plus the
+          // 1.5s live-status poll re-trigger refreshActiveProfile() on every
+          // session-store republish, and each 200 response here would republish
+          // $profiles with a FRESH array even when the list is byte-identical.
+          // That unconditional republish feeds useSubscribable /
+          // useSyncExternalStore churn until the tap-scheduler 50-depth guard
+          // throws "Maximum update depth exceeded". Same list: no publication.
+          const prevProfiles = $profiles.get()
 
-            $profiles.set(profiles)
-          })
+          if (!profilesEqual(prevProfiles, profiles)) {
+            batch(() => {
+              if (source !== null) {
+                $profilesByConnection.set(new Map($profilesByConnection.get()).set(source, profiles))
+              }
+
+              $profiles.set(profiles)
+            })
+          } else if (source !== null && $profilesByConnection.get().get(source) !== profiles) {
+            // The shared $profiles list is unchanged but the per-connection
+            // cache still holds a stale ref (e.g. it was seeded on connection
+            // adopt before the first fetch landed). Update only that entry so
+            // the map gains the fresh ref without republishing $profiles.
+            $profilesByConnection.set(new Map($profilesByConnection.get()).set(source, profiles))
+          }
         }
 
         return profiles

@@ -307,6 +307,23 @@ describe('refreshProfiles shared rail list (#49289)', () => {
     expect(vi.mocked(getProfiles)).toHaveBeenCalledTimes(3)
     expect($profiles.get().map(profile => profile.name)).toEqual(['default', 'test1'])
   })
+
+  it('does not republish $profiles when the fetched list is content-identical (no-op tick)', async () => {
+    // The gateway 409 steady state re-triggers refreshActiveProfile on every
+    // session-store republish; each 200 with an unchanged list must be a
+    // no-op so useSubscribable subscribers see a ref-stable snapshot.
+    const seeded = [profile('default', true)]
+    $profiles.set(seeded)
+    vi.mocked(getProfiles).mockResolvedValue({ profiles: [profile('default', true)] })
+
+    await refreshProfiles()
+
+    expect($profiles.get()).toBe(seeded)
+    // A genuinely changed list still publishes.
+    vi.mocked(getProfiles).mockResolvedValue({ profiles: [profile('default', true), profile('extra')] })
+    await refreshProfiles()
+    expect($profiles.get().map(profile => profile.name)).toEqual(['default', 'extra'])
+  })
 })
 
 describe('stale profile-list fetches across a backend switch (#85731)', () => {
