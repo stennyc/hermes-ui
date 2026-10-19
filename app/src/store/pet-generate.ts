@@ -1,5 +1,6 @@
 import { atom } from 'nanostores'
 
+import { clientRandomUUID } from '@/lib/client-id'
 import { isMissingRpcMethod } from '@/lib/gateway-rpc'
 import { persistBoolean, persistString, storedBoolean, storedString } from '@/lib/storage'
 import { capitalize } from '@/lib/text'
@@ -476,7 +477,7 @@ export async function hatchSelected(request: GatewayRequest, options: HatchOptio
   // Hatch cancellation rides its own token (not the draft token): hatching
   // mid-generation leaves pet.generate releasing that token, which would race
   // the arm. The draft token still locates the staged image server-side.
-  const cancelToken = crypto.randomUUID()
+  const cancelToken = clientRandomUUID()
   const hatchRunId = hatch.begin()
   const controller = new AbortController()
   hatch.arm(() => {

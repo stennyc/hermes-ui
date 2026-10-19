@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo } from 'react'
 
 import { useGatewayRequest } from '@/app/gateway/hooks/use-gateway-request'
+import { clientRandomUUID } from '@/lib/client-id'
 
 import type {
   BillingChargeResponse,
@@ -144,7 +145,7 @@ const callBilling = async <T>(
 }
 
 export const createBillingApi = (requestGateway: BillingRequestGateway): BillingApi => ({
-  charge: async (amountUsd, idempotencyKey = crypto.randomUUID()) => {
+  charge: async (amountUsd, idempotencyKey = clientRandomUUID()) => {
     const result = await callBilling<BillingChargeResponse>(requestGateway, 'billing.charge', {
       amount_usd: amountUsd,
       idempotency_key: idempotencyKey

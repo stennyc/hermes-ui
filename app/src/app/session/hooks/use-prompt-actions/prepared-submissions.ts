@@ -1,4 +1,5 @@
 import type { ComposerAttachment } from '@/store/composer'
+import { clientRandomUUID } from '@/lib/client-id'
 import type { SessionOwnerScope } from '@/store/session-request-router'
 
 import type { SubmissionDestination } from './submission-destination'
@@ -220,7 +221,7 @@ export async function adoptPreparedSubmission(
  *  entry, so a separate send from another window cannot overwrite or share its identity. */
 export async function preparedSubmissionSlot(intent: string): Promise<string> {
   if (!(await readJournal())[intent] && (await holdPreparedSubmission(intent))) { return intent }
-  const key = JSON.stringify([...JSON.parse(intent), crypto.randomUUID()])
+  const key = JSON.stringify([...JSON.parse(intent), clientRandomUUID()])
   await holdPreparedSubmission(key)
 
   return key

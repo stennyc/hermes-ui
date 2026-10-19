@@ -31,6 +31,7 @@
 
 import { atom } from 'nanostores'
 
+import { clientRandomUUID } from '@/lib/client-id'
 import { $workspaceMode } from '@/components/pane-shell/workspace-scope'
 import { KEYBIND_ACTION_IDS, KEYBIND_READONLY } from '@/lib/keybinds/actions'
 import { readJson, writeJson } from '@/lib/storage'
@@ -358,7 +359,7 @@ export type DesktopMetricsGate = 'off' | 'on' | null
 export const $desktopMetricsGate = atom<DesktopMetricsGate>(null)
 
 /** One id per renderer load: an onboarding step still open from another load was abandoned. */
-const LAUNCH_ID = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : String(Math.random())
+const LAUNCH_ID = clientRandomUUID()
 
 /** Hash of the bound `connection|profile`: names the local record and main's crash consent. */
 let scope = scopeKey('|default')

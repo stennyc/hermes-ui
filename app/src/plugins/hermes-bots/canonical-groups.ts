@@ -2,6 +2,8 @@ import { host } from '@hermes/plugin-sdk'
 
 import type { GroupMember } from './types'
 
+import { clientRandomUUID } from '@/lib/client-id'
+
 export interface CanonicalGroupRoute {
   connectionId: string
   profile: string
@@ -137,7 +139,7 @@ export async function createCanonicalGroup(
   })
 
   const { room } = await canonicalGroupRequest<{ room: CanonicalRoom }>(route, 'groups.create', {
-    room_id: crypto.randomUUID(), name, members: roster
+    room_id: clientRandomUUID(), name, members: roster
   })
 
   return { binding: { ...route, roomId: room.room_id }, room }

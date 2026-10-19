@@ -11,6 +11,7 @@
 
 import { atom, host } from '@hermes/plugin-sdk'
 
+import { clientRandomUUID } from '@/lib/client-id'
 import { $botMeta, $lastRoster, botRosterKey } from './data'
 import { groupMemberReferencesConnection, markOrphanedGroupMemberDescriptor } from './hygiene'
 import { displayName } from './labels'
@@ -1703,11 +1704,7 @@ export function setGroupChatImage(group: string, image: null | string | undefine
 }
 
 function groupChatEntryId(): string {
-  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
-    return globalThis.crypto.randomUUID()
-  }
-
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  return clientRandomUUID()
 }
 
 /** The agent loop's "(empty)" terminal sentinel (empty_response_exhausted) is

@@ -1,4 +1,5 @@
 import { SLASH_COMMAND_RE } from '@hermes/shared'
+import { clientRandomUUID } from '@/lib/client-id'
 import { type RefObject, useLayoutEffect, useRef } from 'react'
 
 import { usePaneVisible } from '@/components/pane-shell/pane-visibility'
@@ -139,7 +140,7 @@ export function useComposerSubmit({
     // The composer owns this send's identity: the caller's (a queue entry), the restored draft's
     // (the explicit retry), else a new one. Equal text never inherits an identity, so a new
     // message that repeats an uncertain send, in this pane or another, is its own turn.
-    const submissionId = target?.submission_id ?? crypto.randomUUID()
+    const submissionId = target?.submission_id ?? clientRandomUUID()
 
     const restore = () => {
       stashAt(restoreScope, text, submittedAttachments)

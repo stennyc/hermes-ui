@@ -3,6 +3,8 @@
 
 export const CANONICAL_GATEWAY_PROTOCOL = 'hermes-gateway-v1'
 
+import { clientRandomUUID } from '@/lib/client-id'
+
 export const canonicalProfile = (profile: unknown): string =>
   typeof profile === 'string' && profile ? profile : 'default'
 
@@ -164,7 +166,7 @@ function canonicalProducerFrame(method: string, params: Record<string, unknown>)
 
   // The owner admits identified input only. An identityless producer (session tile, quick entry,
   // bot chats) is a fresh send on every call, which is what the legacy wire did with it.
-  if (method === 'prompt.submit' && !params.submission_id && !params.input_id) { return { ...params, submission_id: crypto.randomUUID() } }
+  if (method === 'prompt.submit' && !params.submission_id && !params.input_id) { return { ...params, submission_id: clientRandomUUID() } }
 
   return method === 'bot_relay.deliver' ? canonicalBotDelivery(params) : params
 }
@@ -259,7 +261,7 @@ export class CanonicalDesktopProtocol {
 
     if (withGeneration && generation === undefined) { throw new Error('Session execution identity unavailable; reconnect before this command') }
 
-    const mutation: Record<string, unknown> = { session_id: sessionId, request_id: crypto.randomUUID(), expected_revision: revision,
+    const mutation: Record<string, unknown> = { session_id: sessionId, request_id: clientRandomUUID(), expected_revision: revision,
       ...(withGeneration ? { expected_generation: generation } : {}), operation, payload }
 
     this.mutations.set(key, mutation)
@@ -421,7 +423,7 @@ export class CanonicalDesktopProtocol {
       ['request_id', 'cwd', 'model', 'provider', 'toolsets', 'reasoning', 'title', 'hidden', 'follow_profile_config', 'service_tier', 'cwd_explicit'].includes(key) || (key === 'profile' && siblingRoute(value))))
 
     const key = JSON.stringify(result)
-    const requestId = params.request_id ?? this.creates.get(key) ?? crypto.randomUUID()
+    const requestId = params.request_id ?? this.creates.get(key) ?? clientRandomUUID()
     this.creates.set(key, String(requestId))
 
     return { ...result, request_id: requestId, source: 'gui' }

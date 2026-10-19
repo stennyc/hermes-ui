@@ -13,6 +13,7 @@
  * (the same thing "Save and reconnect" does). This module is the single source
  * of truth; the window.hermesDesktop bridge reads the active gateway from here.
  */
+import { clientRandomUUID } from '@/lib/client-id'
 import { atom } from 'nanostores'
 
 export interface GatewayConnection {
@@ -198,13 +199,9 @@ export function syncDevGatewayCookie(): void {
 }
 
 function newId(): string {
-  try {
-    return crypto.randomUUID()
-  } catch {
-    // Fallback for the rare environment without crypto.randomUUID; uniqueness
-    // only needs to hold within this browser's saved list.
-    return `gw-${Date.now().toString(36)}`
-  }
+  // Fallback shape for the rare environment without crypto.randomUUID; uniqueness
+  // only needs to hold within this browser's saved list.
+  return `gw-${clientRandomUUID()}`
 }
 
 function defaultStore(): GatewayStore {

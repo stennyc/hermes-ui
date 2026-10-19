@@ -2,6 +2,7 @@ import { Button } from '@hermes/plugin-sdk'
 import { useLayoutEffect, useRef, useState } from 'react'
 
 import { downloadCanonicalAttachment } from './canonical-attachment-download'
+import { clientRandomUUID } from '@/lib/client-id'
 import { useCanonicalGroupLabels } from './canonical-group-labels'
 import { type CanonicalGroupBinding, canonicalGroupRequest } from './canonical-groups'
 
@@ -53,7 +54,7 @@ export function CanonicalGroupAttachments({ binding, attachments, onChange, onUp
       })
 
       const result = await canonicalGroupRequest<Attachment>(binding, 'groups.attachment.upload', {
-        room_id: binding.roomId, upload_id: crypto.randomUUID(), kind: kindFor(file), name: file.name,
+        room_id: binding.roomId, upload_id: clientRandomUUID(), kind: kindFor(file), name: file.name,
         mime: file.type || 'application/octet-stream', data_base64: data
       })
 
