@@ -9,6 +9,7 @@ import { $connection, $gatewayState, $sessions, setSessions } from '@/store/sess
 import { $sessionTiles, openSessionTile, reopenLastClosedTile, type SessionTile } from '@/store/session-states'
 
 import {
+  CROSS_PROFILE_TILE_ERROR,
   sessionTileResumeFailure,
   shouldResumeSessionTile,
   startTileBackendIdentityGuard,
@@ -64,10 +65,8 @@ describe('shouldResumeSessionTile', () => {
 })
 
 describe('sessionTileResumeFailure', () => {
-  it('keeps a confirmed durable session retryable instead of repeating a stale 404', () => {
-    expect(sessionTileResumeFailure('session not found', true, true)).toBe(
-      'Session is still available — retry resuming it.'
-    )
+  it('latches a durable cross-profile session behind the persistent cross-profile error', () => {
+    expect(sessionTileResumeFailure('session not found', true, true)).toBe(CROSS_PROFILE_TILE_ERROR)
   })
 
   it('fails safe on an inconclusive durable lookup', () => {

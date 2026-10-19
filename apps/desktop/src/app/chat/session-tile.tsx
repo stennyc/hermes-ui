@@ -93,6 +93,19 @@ const NO_MESSAGES: ChatMessage[] = []
 export const WRONG_BACKEND_TILE_ERROR =
   'Wrong backend — this session lives on another connection. Reconnect to that backend to open it.'
 
+// A session whose durable row lives on ANOTHER profile's state.db, but the
+// active gateway routes the resume to the current profile: the gateway 404s
+// (its own state.db has no such row) while the cross-profile probe confirms
+// the session is still alive. Latching a transient, auto-retryable copy
+// ('Session is still available — retry resuming it.') made the gatewayOpen
+// effect clear it on the next render and re-fire the resume effect — an
+// infinite 404 + resolve loop. This copy survives that clear, like
+// WRONG_BACKEND_TILE_ERROR, so the loop stops here; the user can still
+// Retry manually (or switch the active profile, after which a fresh resolve
+// finds the owning profile directly).
+export const CROSS_PROFILE_TILE_ERROR =
+  'Session lives on a different profile — switch the active profile (or reconnect to that backend) to open it.'
+
 export function sessionTileResumeFailure(
   message: string,
   durableSessionFound: boolean | undefined,
@@ -112,7 +125,7 @@ export function sessionTileResumeFailure(
   }
 
   if (durableSessionFound) {
-    return 'Session is still available — retry resuming it.'
+    return CROSS_PROFILE_TILE_ERROR
   }
 
   return 'Session unavailable — you can retry resuming it.'
@@ -560,9 +573,17 @@ export function SessionTilePane({ storedSessionId }: { storedSessionId: string }
   // The gateway (re)opening invalidates any latched error — it likely came
   // from a not-yet-open gateway or the previous connection. Clearing it
   // retriggers the resume effect: one bounded auto-retry per (re)connect,
-  // mirroring the primary path's became-open resync.
+  // mirroring the primary path's became-open resync. WRONG_BACKEND /
+  // CROSS_PROFILE are deterministic (they name the real route and cannot
+  // self-heal on a reconnect), so clearing them would just restart the
+  // 404 → resolve → re-latch loop.
   useEffect(() => {
-    if (gatewayOpen && tile?.error && tile.error !== WRONG_BACKEND_TILE_ERROR) {
+    if (
+      gatewayOpen &&
+      tile?.error &&
+      tile.error !== WRONG_BACKEND_TILE_ERROR &&
+      tile.error !== CROSS_PROFILE_TILE_ERROR
+    ) {
       patchSessionTile(storedSessionId, { error: undefined })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
