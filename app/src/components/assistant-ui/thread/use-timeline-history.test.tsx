@@ -93,4 +93,42 @@ describe('timeline history index', () => {
 
     expect(api).not.toHaveBeenCalled()
   })
+
+  it('does not fetch a freshly minted draft with an in-flight first message (row not yet persisted)', async () => {
+    // The session was created this run but its first turn has not reached the
+    // store yet: the live tail is non-empty, yet the state.db row does not
+    // exist, so the timeline read can only 404.
+    view.$messages = atom<Array<{ id: string; role: string; rowId?: number }>>([
+      { id: 'u1', role: 'user' }
+    ])
+    sessionCreatedThisRun.mockReturnValue(true)
+    const { useTimelineHistory } = await import('./use-timeline-history')
+
+    renderHook(() => useTimelineHistory())
+
+    await act(async () => {
+      vi.advanceTimersByTime(200)
+      await Promise.resolve()
+    })
+
+    expect(api).not.toHaveBeenCalled()
+  })
+
+  it('fetches once the session stops being a this-run draft (row now persisted)', async () => {
+    view.$messages = atom<Array<{ id: string; role: string; rowId?: number }>>([
+      { id: 'u1', role: 'user', rowId: 1 }
+    ])
+    sessionCreatedThisRun.mockReturnValue(false)
+    api.mockResolvedValueOnce(page([1]))
+    const { useTimelineHistory } = await import('./use-timeline-history')
+
+    renderHook(() => useTimelineHistory())
+
+    await act(async () => {
+      vi.advanceTimersByTime(200)
+      await Promise.resolve()
+    })
+
+    expect(api).toHaveBeenCalledTimes(1)
+  })
 })

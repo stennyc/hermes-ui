@@ -40,10 +40,12 @@ export function useTimelineHistory() {
         return
       }
 
-      // A freshly minted draft has no state.db row until the first prompt persists
-      // it (#123622) — fetching its timeline before then only ever 404s, since an
-      // empty local view already IS the correct (empty) render.
-      if (sessionCreatedThisRun(storedId) && view.$messages.get().length === 0) {
+      // A freshly minted draft has no state.db row until its first turn persists
+      // it (#123622) — fetching its timeline before the row lands only ever 404s,
+      // even when the live tail is non-empty (the just-sent first message hasn't
+      // reached the store yet). Skip until the row exists; `loadMore` is re-driven
+      // when the live tail grows past a prior complete index.
+      if (sessionCreatedThisRun(storedId)) {
         return
       }
 
