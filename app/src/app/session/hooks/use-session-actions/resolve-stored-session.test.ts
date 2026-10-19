@@ -88,9 +88,42 @@ describe('resolveStoredSession profile ownership', () => {
     const resolved = await resolveStoredSession('s1')
 
     expect(resolved?.profile).toBe('default')
-    // rung 2 (active profile) then rung 3 (stamped cross-profile probe)
+    // rung 2 (active profile, active read) then rung 3 (stamped cross-profile
+    // probe, passive read)
     expect(mockGetSession).toHaveBeenNthCalledWith(1, 's1', 'meta')
-    expect(mockGetSession).toHaveBeenNthCalledWith(2, 's1', 'default')
+    expect(mockGetSession).toHaveBeenNthCalledWith(2, 's1', 'default', { passive: true })
+  })
+
+  it('runs the cross-profile rung as one concurrent probe batch, not a serial chain', async () => {
+    $activeGatewayProfile.set('default')
+    $profiles.set(profiles('default', 'a', 'b', 'c'))
+
+    // 'a' opens but settles last; 'b'/'c' open immediately. A serial chain
+    // would not open 'b' until 'a' settled — the start-time assertion below
+    // is what actually proves the probes overlapped.
+    const opened: string[] = []
+    let aRelease!: (error: Error) => void
+    mockGetSession.mockImplementation((id, profile) => {
+      void id
+      opened.push(String(profile))
+      return profile === 'a'
+        ? new Promise<never>((_resolve, reject) => {
+            aRelease = reject
+          })
+        : Promise.reject(new Error('404: Session not found'))
+    })
+
+    const pending = resolveStoredSession('s1')
+    await vi.waitFor(() => expect(opened.slice(1)).toEqual(['a', 'b', 'c']))
+    aRelease(new Error('404: Session not found'))
+    const result = await pending
+
+    // Every profile 404ed -> unresolved -> undefined (the `gone` verdict the
+    // probe exposes is not a session, so resolveStoredSession returns undefined)
+    expect(result).toBeUndefined()
+    expect(mockGetSession).toHaveBeenCalledWith('s1', 'a', { passive: true })
+    expect(mockGetSession).toHaveBeenCalledWith('s1', 'b', { passive: true })
+    expect(mockGetSession).toHaveBeenCalledWith('s1', 'c', { passive: true })
   })
 
   it('scopes the first by-id lookup so a miss does not skip the active profile', async () => {

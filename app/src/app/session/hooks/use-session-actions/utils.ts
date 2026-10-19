@@ -2258,14 +2258,21 @@ export async function probeStoredSession(
   // lookup each) rather than pulling every profile's recent sessions. The
   // first hit carries its owning `profile`, which routes the resume to the
   // right backend. The active profile was already tried above.
-  const otherProfiles = $profiles
-    .get()
-    .map(profile => normalizeProfileKey(profile.name))
+  //
+  // Probes run CONCURRENTLY (not a serial for-await loop) — a session living
+  // on a non-active profile previously costed the full serial round-trip
+  // through every earlier profile's 404 before the real one answered. First
+  // RESOLVED hit still wins and the settled probes keep counting toward the
+  // gone/inconclusive verdict, so this stays behaviorally identical to the
+  // serial loop (same `allGone` semantics, same `recordFailure` per probe).
+  // The per-profile 404 noise that made the serial version paint a red
+  // console line per profile is a `passive` read below.
+  const otherProfiles = [...new Set($profiles.get().map(profile => normalizeProfileKey(profile.name)))]
     .filter(key => key !== activeKey)
 
-  for (const profile of otherProfiles) {
+  const probePromises = otherProfiles.map(async profile => {
     try {
-      const session = await getSession(storedSessionId, profile)
+      const session = await getSession(storedSessionId, profile, { passive: true })
 
       // Same ownership contract: the DESKTOP profile we explicitly probed is
       // authoritative, whatever the scoped backend stamped (older backends
@@ -2275,11 +2282,30 @@ export async function probeStoredSession(
 
       upsertResolvedSession(session, storedSessionId, tombstoneGenerationsAtRequestStart)
 
-      return { status: 'found', session }
+      return { session, error: undefined as unknown }
     } catch (error) {
-      // Not on this profile; try the next.
+      // Not on this profile; verdict counts it via recordFailure.
       recordFailure(error)
+      return { session: undefined, error }
     }
+  })
+
+  for (const probe of probePromises) {
+    const { session, error } = await probe
+
+    if (session !== undefined) {
+      // First hit settles; drain the remaining settled probes so the
+      // `allGone` verdict (and its `recordFailure` bookkeeping) still sees
+      // every outcome, exactly like the serial loop did — only the ordering
+      // of the network work is now overlapped, not skipped.
+      for (const remaining of probePromises) {
+        await remaining.catch(() => undefined)
+      }
+
+      return { status: 'found', session }
+    }
+
+    void error
   }
 
   return { status: allGone && $profiles.get().length > 0 ? 'gone' : 'inconclusive' }
