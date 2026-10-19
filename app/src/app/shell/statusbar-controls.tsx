@@ -28,7 +28,7 @@ import {
 // Shared chrome styling for interactive statusbar items (button / link / menu
 // trigger). The 'text' variant intentionally omits hover/transition/disabled.
 const STATUSBAR_ACTION_CLASS =
-  'inline-flex h-full items-center gap-1 rounded-none px-1.5 text-[0.6875rem] text-(--ui-text-tertiary) transition-colors hover:bg-(--chrome-action-hover) hover:text-foreground disabled:cursor-default disabled:opacity-45'
+  'inline-flex h-full items-center gap-1 rounded-none px-2 text-[0.8125rem] text-(--ui-text-tertiary) transition-colors hover:bg-(--chrome-action-hover) hover:text-foreground disabled:cursor-default disabled:opacity-45'
 
 export interface StatusbarMenuItem {
   id: string
@@ -101,7 +101,7 @@ export function StatusbarControls({ className, leftItems = [], items = [], ...pr
       <ContextMenuTrigger asChild>
         <footer
           className={cn(
-            'flex h-5 shrink-0 items-stretch justify-between gap-2 bg-(--ui-sidebar-surface-background) px-1 py-0 text-(--ui-text-tertiary) [-webkit-app-region:no-drag]',
+            'flex h-6 shrink-0 items-stretch justify-between gap-2 bg-(--ui-sidebar-surface-background) px-1 py-0 text-(--ui-text-tertiary) [-webkit-app-region:no-drag]',
             className
           )}
           data-slot="statusbar"
@@ -320,7 +320,7 @@ const StatusbarItemView = memo(function StatusbarItemView({
       <Tip label={tooltipLabel}>
         <div
           className={cn(
-            'inline-flex h-full items-center gap-1 px-1.5 text-[0.6875rem] text-(--ui-text-tertiary)',
+            'inline-flex h-full items-center gap-1 px-2 text-[0.8125rem] text-(--ui-text-tertiary)',
             item.className
           )}
         >

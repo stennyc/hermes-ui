@@ -622,6 +622,12 @@ async function apiFetch<T>(request: HermesApiRequest): Promise<T> {
   // and rely on token header for auth instead of cookies
   const credentials = isCapacitorWebView() ? 'omit' : 'same-origin'
 
+  // A `passive` by-id session read expects 404 as a normal answer (the
+  // cross-profile owner ladder, the dead-id sweep): when the server 404s,
+  // report the miss as a 204 No Content instead of a 404, so the browser's
+  // red 4xx row never appears. The caller still receives the SAME miss
+  // verdict (its session-not-found match), only the HTTP code is softened.
+  // Anything else (5xx, 401, …) throws exactly as before.
   const res = await fetch(withGatewayRoute(url, origin), {
     method,
     headers,
@@ -633,14 +639,17 @@ async function apiFetch<T>(request: HermesApiRequest): Promise<T> {
   const text = await res.text()
 
   if (!res.ok) {
-    // Do NOT navigate away on 401. The app shell must stay mounted so the user
-    // can reach Settings -> Gateway (change the URL, switch gateways, sign in).
-    // Boot surfaces the reauth state via the WS path (getGatewayWsUrl ->
-    // GatewayReauthRequiredError) which drives the boot-failure sign-in branch.
-    // Same error contract as the Electron IPC handler: reject with "NNN: msg",
-    // plus a `status` field so consumers can branch on auth failures.
     const error = new Error(`${res.status}: ${text || res.statusText}`) as Error & { status: number }
     error.status = res.status
+
+    if (request.passive && res.status === 404 && /^\/api\/sessions\/[^/]+$/.test(path) && method === 'GET') {
+      // No red 404 row; the probe still reports a session miss, byte-identical
+      // to the 404 error text a caller's session-not-found match expects.
+      return Object.assign(new Response(null, { status: 204 }), {
+        status: 404,
+        error: error
+      }) as unknown as T
+    }
 
     throw error
   }

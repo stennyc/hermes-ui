@@ -519,6 +519,15 @@ export function getSession(id: string, profile?: ProfileScope, options: { passiv
     ...scope,
     path: `/api/sessions/${encodeURIComponent(id)}${suffix}`,
     ...(options.passive ? { passive: true } : {})
+  }).catch((error: unknown) => {
+    // A passive by-id miss degrades to a 204 in the web bridge (no red 4xx
+    // row). Resolve it back to the same session-not-found error a caller's
+    // verdict match expects.
+    if (error && typeof error === 'object' && 'error' in error && error.error instanceof Error) {
+      throw error.error
+    }
+
+    throw error
   })
 }
 
