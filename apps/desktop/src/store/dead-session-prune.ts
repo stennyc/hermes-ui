@@ -26,6 +26,7 @@ import { $queuedPromptsBySession, clearQueuedPrompts } from '@/store/composer-qu
 import { $pinnedSessionIds, unpinSession } from '@/store/layout'
 import { $activeGatewayProfile, $profiles, normalizeProfileKey } from '@/store/profile'
 import { $sessions } from '@/store/session'
+import type { ProfileInfo } from '@/types/hermes'
 
 import { forgetPinSyncState } from './session-pin-sync'
 
@@ -43,6 +44,13 @@ const ALIVE_TTL_MS = 10 * 60_000
 // Ids verified ALIVE this app session, id -> verdict expiry timestamp — later
 // sweeps skip re-probing ids whose verdict is still fresh.
 const alive = new Map<string, number>()
+// Ids verified DEAD (404 on EVERY known profile) at drop time. Unlike the
+// in-memory `alive` cache these survive an app restart: their stale local
+// reference (a deep link, a persisted pane) is what keeps re-arming the full
+// per-profile 404 sweep on every boot. Re-probed only after the profile
+// inventory grows (a new profile could now own the id) or after a gateway
+// switch (the measured backend is gone).
+const dead = new Map<string, Set<string>>()
 // Ids currently mid-probe, so overlapping sweeps don't double-probe.
 const inFlight = new Set<string>()
 
@@ -152,10 +160,26 @@ function collectCandidates(): string[] {
     }
   }
 
+  const knownProfiles = new Set($profiles.get().map(profile => normalizeProfileKey(profile.name)))
+
   return [...candidates].filter(id => {
     const expiresAt = alive.get(id)
 
-    return !(expiresAt !== undefined && Date.now() < expiresAt) && !inFlight.has(id)
+    if (expiresAt !== undefined && Date.now() < expiresAt) {
+      return false
+    }
+
+    if (inFlight.has(id)) {
+      return false
+    }
+
+    // A remembered dead verdict is trusted only while the profile inventory
+    // it was measured against is unchanged: a newly known profile could now
+    // own the id, so re-probe once the set grows. (A gateway switch clears
+    // `dead` wholesale in resetDeadSessionPrune.)
+    const measuredOn = dead.get(id)
+
+    return measuredOn === undefined || ![...measuredOn].every(key => knownProfiles.has(key))
   })
 }
 
@@ -225,6 +249,7 @@ async function sweepOnce(requireLoaded = true): Promise<void> {
       if (verdict === 'alive') {
         alive.set(id, Date.now() + ALIVE_TTL_MS)
       } else if (verdict === 'dead') {
+        dead.set(id, new Set($profiles.get().map((profile: ProfileInfo) => normalizeProfileKey(profile.name))))
         dropDeadId(id)
       }
       // 'unknown' — neither cached nor dropped; a later sweep retries it.

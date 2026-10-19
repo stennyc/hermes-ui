@@ -36,6 +36,8 @@ function localConnection(): HermesConnection {
   }
 }
 
+const NOT_FOUND = '404: {"detail":"Session not found"}'
+
 describe('shouldResumeSessionTile', () => {
   const live = {
     gatewayOpen: true,
@@ -228,6 +230,36 @@ describe('startUnrestoredTileTitleBackfill retires dead tiles (#125678)', () => 
     expect(window.localStorage.getItem('hermes.desktop.sessionTiles.v2') ?? '').not.toContain('dead-chat')
     reopenLastClosedTile()
     expect($sessionTiles.get()).toEqual([])
+  })
+
+  it('skips the per-profile ladder on a same-run reconnect after a definitive gone verdict, and probes again in a new run', async () => {
+    openSessionTile('gone-chat')
+    get.mockRejectedValue(new Error(NOT_FOUND))
+
+    stop = startUnrestoredTileTitleBackfill()
+    $gatewayState.set('open')
+
+    // First run: the full ladder fires and the tile is retired.
+    await vi.waitFor(() => expect($sessionTiles.get()).toEqual([]))
+    expect(get).toHaveBeenCalledTimes(2)
+
+    // Same-run reconnect: the verdict is remembered, no re-probe.
+    get.mockClear()
+    $gatewayState.set('idle')
+    $gatewayState.set('open')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(get).not.toHaveBeenCalled()
+
+    // A NEW run probes again: the verdict lives in the previous closure
+    // instance, and a freshly restored tile with the same id re-arms the
+    // full ladder (e.g. a persisted pane re-registered after the reload).
+    stop()
+    openSessionTile('gone-chat')
+    get.mockReset()
+    stop = startUnrestoredTileTitleBackfill()
+    $gatewayState.set('idle')
+    $gatewayState.set('open')
+    await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(2))
   })
 
   it.each([

@@ -656,6 +656,12 @@ export function startUnrestoredTileTitleBackfill(lookup = probeStoredSession): (
   // this run before the gateway answers has no durable row yet either.
   const restored = new Set($sessionTiles.get().flatMap(tile => (tile.runtimeId ? [] : [tile.storedSessionId])))
   let stopped = false
+  // A definitive all-profile 404 verdict, remembered per run for the exact
+  // (connection, profile, id) it was measured on. A later reconnect in the
+  // same run skips the per-profile 404 ladder for those ids (the user's open
+  // reference cannot make them alive again without a new local reference);
+  // a gateway switch re-scopes the key, so it re-probes once.
+  const goneVerdicts = new Map<string, Set<string>>()
 
   const run = () => {
     if ($gatewayState.get() !== 'open') {
@@ -678,7 +684,15 @@ export function startUnrestoredTileTitleBackfill(lookup = probeStoredSession): (
 
     const probes = $sessionTiles
       .get()
-      .filter(tile => !tile.runtimeId && !tile.workspaceTabTitle && !tileStoredRow(tile.storedSessionId))
+      .filter(
+        tile =>
+          !tile.runtimeId &&
+          !tile.workspaceTabTitle &&
+          !tileStoredRow(tile.storedSessionId) &&
+          !goneVerdicts
+            .get(`${$connection.get()?.connectionId ?? ''}::${$activeGatewayProfile.get()}`)
+            ?.has(tile.storedSessionId)
+      )
       .map(tile =>
         lookup(tile.storedSessionId, tile.ownerRoute)
           .then(result => {
@@ -697,6 +711,10 @@ export function startUnrestoredTileTitleBackfill(lookup = probeStoredSession): (
               !draft.text.trim() &&
               draft.attachments.length === 0
             ) {
+              const verdictKey = `${$connection.get()?.connectionId ?? ''}::${$activeGatewayProfile.get()}`
+              const remembered = goneVerdicts.get(verdictKey) ?? new Set<string>()
+              remembered.add(tile.storedSessionId)
+              goneVerdicts.set(verdictKey, remembered)
               // Not `closeSessionTile`: a dead id must not sit on the reopen stack.
               discardSessionTile(tile.storedSessionId)
             }
