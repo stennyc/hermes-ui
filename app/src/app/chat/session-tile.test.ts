@@ -9,6 +9,7 @@ import { $connection, $gatewayState, $sessions, setSessions } from '@/store/sess
 import { $sessionTiles, openSessionTile, reopenLastClosedTile, type SessionTile } from '@/store/session-states'
 
 import {
+  CROSS_PROFILE_TILE_ERROR,
   sessionTileResumeFailure,
   shouldResumeSessionTile,
   startTileBackendIdentityGuard,
@@ -64,10 +65,14 @@ describe('shouldResumeSessionTile', () => {
 })
 
 describe('sessionTileResumeFailure', () => {
-  it('keeps a confirmed durable session retryable instead of repeating a stale 404', () => {
-    expect(sessionTileResumeFailure('session not found', true, true)).toBe(
-      'Session is still available — retry resuming it.'
-    )
+  it('latches a durable cross-profile session behind the persistent cross-profile error', () => {
+    // A session whose row lives on ANOTHER profile's state.db (durableSessionFound=true)
+    // but the active gateway routes to the current profile: resume 404s. The old
+    // copy ('Session is still available — retry resuming it.') got cleared by the
+    // gatewayOpen effect on the next render, retriggers the resume effect, and loops.
+    // The cross-profile error is treated like WRONG_BACKEND_TILE_ERROR: it survives
+    // the gatewayOpen clear so the loop stops here.
+    expect(sessionTileResumeFailure('session not found', true, true)).toBe(CROSS_PROFILE_TILE_ERROR)
   })
 
   it('fails safe on an inconclusive durable lookup', () => {
