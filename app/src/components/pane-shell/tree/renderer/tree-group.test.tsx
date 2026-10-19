@@ -362,4 +362,90 @@ describe('TreeGroup', () => {
     expect(screen.getByRole('menuitem', { name: /settings/i })).toBeTruthy()
     expect(screen.getByRole('menuitem', { name: /update/i })).toBeTruthy()
   })
+
+  // Chromium flags "Blocked aria-hidden on an element because its descendant
+  // retained focus": flipping a zone tab inactive lands `aria-hidden` +
+  // `inert` on the pane layer on the very commit whose focus still sits inside
+  // it (`inert` does not move focus, so the focused child survives). Blur a
+  // focus that has moved OUT of the zone's active pane, before the hidden
+  // layer paints.
+  it('releases focus held in a sibling tab when that tab is deactivated', () => {
+    const disposeA = registry.register({
+      area: 'panes',
+      id: 'terminal',
+      title: 'Terminal',
+      render: () => <input data-terminal-tab defaultValue="t" />
+    })
+
+    const disposeB = registry.register({
+      area: 'panes',
+      id: 'plain',
+      title: 'Plain',
+      render: () => <input data-plain-tab defaultValue="p" />
+    })
+
+    disposePane = () => {
+      disposeA()
+      disposeB()
+    }
+
+    vi.stubGlobal('CSS', { escape: (value: string) => value })
+    stubResizeObserver()
+
+    const zone: GroupNode = { ...terminalGroup(false), panes: ['terminal', 'plain'] }
+
+    render(<TreeGroup node={zone} parentAxis="row" />)
+    const terminalInput = container!.querySelector<HTMLInputElement>('[data-terminal-tab]')!
+    terminalInput.focus()
+    expect(document.activeElement).toBe(terminalInput)
+
+    // Activate the sibling: the terminal tab flips to aria-hidden + inert on
+    // the same commit its focus still holds.
+    render(<TreeGroup node={{ ...zone, active: 'plain' }} parentAxis="row" />)
+
+    const terminalLayer = container!.querySelector<HTMLElement>('[data-pane-layer="terminal"]')!
+    expect(terminalLayer.hasAttribute('inert')).toBe(true)
+    expect(terminalLayer.hasAttribute('aria-hidden')).toBe(true)
+
+    // The stale focus is released to the document, not stranded in the
+    // hidden subtree (that stranded state is what Chromium blocks on).
+    expect(container!.contains(document.activeElement)).toBe(false)
+  })
+
+  it('does not steal focus that belongs to the zone active pane', () => {
+    const disposeA = registry.register({
+      area: 'panes',
+      id: 'terminal',
+      title: 'Terminal',
+      render: () => <input data-terminal-tab defaultValue="t" />
+    })
+
+    const disposeB = registry.register({
+      area: 'panes',
+      id: 'plain',
+      title: 'Plain',
+      render: () => <div>Plain</div>
+    })
+
+    disposePane = () => {
+      disposeA()
+      disposeB()
+    }
+
+    vi.stubGlobal('CSS', { escape: (value: string) => value })
+    stubResizeObserver()
+
+    const zone: GroupNode = { ...terminalGroup(false), panes: ['terminal', 'plain'] }
+
+    // Focus the active tab's input first.
+    render(<TreeGroup node={zone} parentAxis="row" />)
+    const terminalInput = container!.querySelector<HTMLInputElement>('[data-terminal-tab]')!
+    terminalInput.focus()
+    expect(document.activeElement).toBe(terminalInput)
+
+    // Re-render WITHOUT changing the active tab (a refresh, not a flip): the
+    // live cursor must survive — only focus that LOST its tab may be blurred.
+    render(<TreeGroup node={{ ...zone, active: 'terminal' }} parentAxis="row" />)
+    expect(document.activeElement).toBe(terminalInput)
+  })
 })

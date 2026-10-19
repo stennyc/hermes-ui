@@ -10,7 +10,7 @@
  */
 
 import { useStore } from '@nanostores/react'
-import { type CSSProperties, Fragment, type ReactNode, type RefObject, useEffect, useRef, useState } from 'react'
+import { type CSSProperties, Fragment, type ReactNode, type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { ShellMenuItems } from '@/app/context-menu/shell-menu-items'
 import { TITLEBAR_DRAG_HANDLE_WIDTH, TITLEBAR_HEIGHT } from '@/app/shell/titlebar'
@@ -97,6 +97,28 @@ import { paneChrome } from './track-model'
  *  tab's menu, so every tab in a strip answers a right-click the same way —
  *  a pane with no domain menu of its own (the file tree, a terminal, the main
  *  tab on a fresh draft) falls through to this one. */
+
+/** True when `element` sits in this zone's ACTIVE pane layer (the live,
+ *  visible tab) — or in a keep-alive host owned by this zone. Focus there is
+ *  the user's live cursor and must never be blurred. */
+function isActivePane(element: HTMLElement, node: GroupNode): boolean {
+  const activeId = node.active
+
+  if (!node.panes.includes(activeId)) {
+    return false
+  }
+
+  const layer = element.closest<HTMLElement>('[data-pane-layer]')
+
+  if (layer) {
+    return layer.dataset.paneLayer === activeId
+  }
+
+  const host = element.closest<HTMLElement>('[data-pane-host]')
+
+  return host?.dataset.paneHost === activeId
+}
+
 function ZoneMenu({
   children,
   closable,
@@ -337,6 +359,23 @@ export function TreeGroup({
       rememberActivePane(memoryKey, activeId)
     }
   }, [activeId, memoryKey])
+
+  // A zone tab flipping inactive hides its pane layer under `aria-hidden` +
+  // `inert`, but the just-blurred focus may still sit inside that subtree —
+  // Chromium flags the focus-within-hidden-ancestor state on the very frame
+  // the aria-hidden attribute lands. `inert` alone does not move focus, so a
+  // focused inner element survives the flip and the warning fires. Blurring a
+  // descendant back to the document BEFORE the hidden layer paints (same
+  // post-commit hand-off keep-alive-panes.ts performs for overlay hosts)
+  // keeps the a11y tree clean without stealing focus from the pane that just
+  // became visible.
+  useLayoutEffect(() => {
+    const active = document.activeElement
+
+    if (active instanceof HTMLElement && ref.current?.contains(active) && !isActivePane(active, node)) {
+      active.blur()
+    }
+  })
 
   // BOUNDED KEEP-ALIVE: the active pane is visible, a small per-zone LRU stays
   // hot-hidden, and older panes park (unmount). This preserves fast tab
@@ -838,6 +877,7 @@ export function TreeGroup({
                     'absolute inset-0 overflow-auto',
                     !isActive && 'pointer-events-none invisible opacity-0'
                   )}
+                  data-pane-layer={paneId}
                   inert={!isActive || undefined}
                   key={paneId}
                   {...hiddenPaneProps(!isActive)}
