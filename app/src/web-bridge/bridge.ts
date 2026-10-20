@@ -779,6 +779,37 @@ function readyBootProgress(): DesktopBootProgress {
 }
 
 async function webNotify(payload: HermesNotification): Promise<boolean> {
+  // Capacitor Android/iOS: the browser Web Notification API is unavailable or
+  // unreliable inside the system WebView. Use @capacitor/local-notifications
+  // instead — it posts to the native notification shade (Android) / center
+  // (iOS) using the plugin's small icon (configured in capacitor.config.json).
+  // The native plugin auto-resumes the app on tap, so no extra deep-link
+  // wiring is needed for the common case.
+  const capacitorLocal = (window as any).Capacitor?.Plugins?.LocalNotifications
+
+  if (capacitorLocal?.notify) {
+    try {
+      await capacitorLocal.requestPermissions?.({
+        display: true,
+        badge: false,
+        sound: !payload.silent,
+        notification: true
+      })
+      await capacitorLocal.notify({
+        title: payload.title ?? 'Hermes',
+        body: payload.body || undefined,
+        id: Date.now(),
+        data: payload.sessionId ? { sessionId: payload.sessionId } : undefined,
+        sound: payload.silent ? null : undefined
+      })
+      return true
+    } catch {
+      // Permission denied or native plugin unavailable — fall through to the
+      // browser path, which may still work in a Capacitor webview on iOS.
+    }
+  }
+
+  // Browser / desktop web: standard Web Notification API.
   if (!('Notification' in window)) {return false}
 
   if (Notification.permission === 'default') {
