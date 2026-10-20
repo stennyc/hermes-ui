@@ -12,6 +12,7 @@ import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useSta
 
 import { isElementInHiddenPane } from '@/components/pane-shell/pane-visibility'
 import { sanitizeComposerInput } from '@/lib/composer-input-sanitize'
+import { isTouchInputDevice } from '@/web-bridge/bridge'
 import { useStoreSelector } from '@/lib/use-session-slice'
 import {
   adoptGoneSessionDraft,
@@ -244,7 +245,18 @@ export function useComposerDraft({
   // turn finished or recovered from a reconnect would otherwise re-run this
   // effect and steal the caret. usePaneVisible defaults true outside a tab
   // stack, so tiles, pop-outs, and secondary windows still auto-focus.
+  //
+  // On a touch-primary device (APK / phone / tablet) this effect is what
+  // pulls the soft keyboard up on app launch or session activation — there is
+  // no desktop "cursor already parked in the field" expectation, and an
+  // unwanted IME sheet is a real navigation obstruction. Skip it there: the
+  // composer still focuses correctly when the user taps it (onFocus marks
+  // active, requestMainFocus / requestComposerFocus paths are unaffected).
   useEffect(() => {
+    if (isTouchInputDevice()) {
+      return
+    }
+
     if (!inputDisabled && paneVisible && !floating) {
       focusInput()
     }

@@ -592,6 +592,21 @@ function isCapacitorWebView(): boolean {
     window.location.href.startsWith('https://localhost')
 }
 
+/**
+ * True on devices whose primary input is a touch screen (mobile / tablet /
+ * phone-in-WebView). The APK's auto-focus effect should NOT pull the soft
+ * keyboard up on app launch — the user must tap the input field explicitly.
+ * Desktop browsers report `pointer: fine` and skip this path.
+ */
+export function isTouchInputDevice(): boolean {
+  if (typeof window === 'undefined') return false
+  // Pointer API: a coarse pointer means touch-primary (phone/tablet).
+  const pointerCoarse = window.matchMedia?.('(pointer: coarse)')?.matches
+  if (pointerCoarse !== undefined) return pointerCoarse
+  // Fallback: any touch points.
+  return navigator.maxTouchPoints > 0
+}
+
 const DEFAULT_API_TIMEOUT_MS = 30_000
 
 async function apiFetch<T>(request: HermesApiRequest): Promise<T> {
