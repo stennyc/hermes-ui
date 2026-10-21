@@ -789,19 +789,26 @@ async function webNotify(payload: HermesNotification): Promise<boolean> {
 
   if (capacitorLocal?.notify) {
     try {
-      await capacitorLocal.requestPermissions?.({
-        display: true,
-        badge: false,
-        sound: !payload.silent,
-        notification: true
-      })
-      await capacitorLocal.notify({
+      // No args — the native side reads permission config from
+      // capacitor.config.json, not from JS. Passing a JS object here is a
+      // no-op; calling with no arguments is the correct form.
+      await capacitorLocal.requestPermissions?.()
+
+      const notifyPayload: Record<string, unknown> = {
         title: payload.title ?? 'Hermes',
         body: payload.body || undefined,
-        id: Date.now(),
-        data: payload.sessionId ? { sessionId: payload.sessionId } : undefined,
-        sound: payload.silent ? null : undefined
-      })
+        id: Date.now()
+      }
+
+      // `extra` (not `data`) is the correct key per the plugin's schema.
+      if (payload.sessionId) {
+        notifyPayload.extra = { sessionId: payload.sessionId }
+      }
+
+      // Do NOT pass `sound: null` — the native `getString("sound")` will
+      // NPE on a JSON null value. Omit the key instead: the native side
+      // then uses the plugin's configured default sound.
+      await capacitorLocal.notify(notifyPayload)
       return true
     } catch {
       // Permission denied or native plugin unavailable — fall through to the
