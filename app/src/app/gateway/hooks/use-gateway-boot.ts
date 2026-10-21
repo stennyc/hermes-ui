@@ -1311,13 +1311,32 @@ export function useGatewayBoot({
 
     const onOnline = () => void forceReconnectNow()
 
+    // L2 backfill: when the renderer comes back to the foreground after being
+    // frozen in the background (Android WebView suspends JS; WS events are
+    // lost, not queued), re-pull the sidebar snapshot if the socket survived.
+    // The socket-reconnect path (attemptReconnect → refreshSessions) only fires
+    // when the socket was actually down; a socket that stayed "open" through a
+    // half-open background suspension never re-pulls, so sessions created
+    // elsewhere stay invisible until a full page refresh. A single REST pull
+    // per foreground return is cheap and deduped by refreshSessions' request-id
+    // guard; it is a no-op when nothing changed.
+    const wakeRefreshSessions = () => {
+      if (cancelled || !bootCompleted || $gatewaySwitching.get() || !gatewayOpen()) {
+        return
+      }
+
+      void callbacksRef.current.refreshSessions().catch(() => undefined)
+    }
+
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
-        void reconnectNow()
+        void reconnectNow().catch(() => undefined).finally(wakeRefreshSessions)
       }
     }
 
-    const onFocus = () => void reconnectNow()
+    const onFocus = () => {
+      void reconnectNow().catch(() => undefined).finally(wakeRefreshSessions)
+    }
 
     window.addEventListener('online', onOnline)
     document.addEventListener('visibilitychange', onVisible)
