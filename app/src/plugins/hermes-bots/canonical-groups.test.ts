@@ -37,11 +37,14 @@ it('pins discovery and every subsequent request to its captured authority, inclu
 
   host.requestProfile.mockRejectedValueOnce(new Error('owner disconnected'))
   await expect(canonicalGroupRequest(route, 'groups.state', { room_id: room.room_id })).rejects.toThrow('owner disconnected')
-  await expect(canonicalGroupRequest({ ...route, connectionId: '' }, 'groups.list', {})).rejects.toThrow()
+  // An empty connectionId routes through the active socket (host.request) —
+  // the new contract: it must not fabricate a requestProfile descriptor.
+  host.request.mockRejectedValueOnce(new Error('active socket down'))
+  await expect(canonicalGroupRequest({ ...route, connectionId: '' }, 'groups.list', {})).rejects.toThrow('active socket down')
+  expect(host.request).toHaveBeenCalledWith('groups.list', expect.objectContaining({ profile: 'default' }))
   await expect(canonicalGroupRequest(route, 'groups.list', { profile: 'other' })).rejects.toThrow()
   host.requestProfile.mockResolvedValueOnce({ driver: true }).mockResolvedValueOnce({ rooms: [], next_offset: 0 })
   await expect(discoverCanonicalGroups(route)).rejects.toThrow('pagination')
-  expect(host.request).not.toHaveBeenCalled()
 })
 
 it('creates only same-authority rosters and dispatches exact advertised attempt identities without inference', async () => {
