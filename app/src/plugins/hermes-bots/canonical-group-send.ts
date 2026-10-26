@@ -13,8 +13,12 @@ export interface PreparedCanonicalGroupSend {
 }
 
 function journalKey(binding: CanonicalGroupBinding): string {
-  if (![binding.connectionId, binding.profile, binding.roomId].every(value => typeof value === 'string' && value.trim())) {
-    throw new Error('Canonical group Send requires an explicit connection, profile and room')
+  // An empty connectionId is legitimate: it means the active socket is the
+  // window's primary source with no registry-scoped id (the host.request
+  // path that captureCanonicalGroupRoute produces for a bare local or
+  // registry-less remote window). Only a missing profile or room is fatal.
+  if (typeof binding.connectionId !== 'string' || !binding.profile?.trim() || !binding.roomId?.trim()) {
+    throw new Error('Canonical group Send requires an explicit profile and room')
   }
 
   // A separate namespace inside the existing origin-scoped native journal.
