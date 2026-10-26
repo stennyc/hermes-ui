@@ -37,19 +37,40 @@ export interface CanonicalPendingAction {
 }
 
 function requireRoute(route: CanonicalGroupRoute): void {
-  if (!route.connectionId?.trim() || !route.profile?.trim()) {
+  // An empty connectionId is legitimate: the active socket is the window's
+  // primary source with no registry-scoped id, and canonicalGroupRequest
+  // routes it through host.request. Only a missing profile is fatal.
+  if (!route.profile?.trim()) {
     throw new Error('Canonical groups require an explicit connection and profile')
   }
 }
 
+/**
+ * The active gateway socket's connection identity, when it is a registry-scoped
+ * source. Null when the window's live socket is a bare local or non-registry
+ * remote — in which case the canonical-group RPCs must ride `host.request`
+ * (the active socket) instead of a `host.requestProfile` descriptor with a
+ * fabricated connectionId (which would try to dial a registry source that
+ * does not exist in this window, e.g. the local host backend of a window
+ * that is itself pointed at a remote dashboard).
+ */
+function activeConnectionIdentity(): string | null {
+  const fromState = host.state.connectionId?.get?.() ?? null
+  const fromActive = typeof host.activeConnectionId === 'function' ? host.activeConnectionId() : null
+
+  return fromState ?? fromActive ?? null
+}
+
 export function captureCanonicalGroupRoute(): CanonicalGroupRoute {
-  const connectionId = host.state.connectionId.get()
+  const connectionId = activeConnectionIdentity()
+  const profile = host.state.profile.get()
 
-  if (connectionId === null) {throw new Error('Canonical groups require an explicit connection')}
-  const route = { connectionId, profile: host.state.profile.get() }
-  requireRoute(route)
+  if (!profile?.trim()) {throw new Error('Canonical groups require an explicit profile')}
 
-  return route
+  // A null connectionId means the active socket is the window's primary source
+  // with no registry-scoped id: route through the active socket (host.request),
+  // never fabricate one.
+  return { connectionId: connectionId ?? '', profile }
 }
 
 export async function canonicalGroupRequest<T>(
@@ -61,6 +82,15 @@ export async function canonicalGroupRequest<T>(
 
   if (params.profile !== undefined && params.profile !== route.profile) {
     throw new Error('Canonical group profile does not match its authority')
+  }
+
+  // An empty connectionId means the active socket is the window's primary source
+  // with no registry-scoped id (bare local, or a remote window that has no
+  // registry connection). Route through the active socket (host.request)
+  // rather than a host.requestProfile descriptor — a fabricated connectionId
+  // would try to dial a registry source that does not exist in this window.
+  if (!route.connectionId) {
+    return host.request<T>(method, { ...params, profile: route.profile })
   }
 
   // The descriptor overload never falls back to the foreground gateway.
@@ -115,9 +145,19 @@ export async function createCanonicalGroup(
   const roster = members.map(member => {
     const connectionId = member.route?.connectionId ?? member.connectionId
 
-    if ((connectionId !== undefined && connectionId !== route.connectionId) ||
-      (member.connectionId !== undefined && member.connectionId !== route.connectionId) ||
-      (connectionId === undefined && member.remoteSource)) {
+    // An empty route.connectionId means "the active socket's authority"
+    // (host.request path): a member is same-authority when it carries no
+    // registry connectionId of its own. A member that DOES carry a
+    // connectionId must match the route's (non-empty) id.
+    const memberMismatch =
+      connectionId !== undefined && connectionId !== route.connectionId &&
+      (route.connectionId !== '' || connectionId !== '')
+    const ownIdMismatch =
+      member.connectionId !== undefined && member.connectionId !== route.connectionId &&
+      (route.connectionId !== '' || member.connectionId !== '')
+
+    if (memberMismatch || ownIdMismatch ||
+      (connectionId === undefined && member.remoteSource && route.connectionId !== '')) {
       throw new Error('Group members must belong to the same authority connection')
     }
 

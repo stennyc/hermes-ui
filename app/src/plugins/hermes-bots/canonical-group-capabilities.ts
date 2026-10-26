@@ -37,7 +37,18 @@ export function groupExecutionMode(value: unknown): GroupExecutionMode {
  *  neither acted on nor published. */
 export function groupCreationSource(route: { connectionId: string; profile: string },
   activationEpoch = gatewayActivationEpoch()) {
+  // An empty connectionId means the active socket is the window's primary source
+  // (host.request path); compare against the same fallback chain so the fence
+  // stays valid for that topology too.
+  const currentId = activeConnectionIdentity()
   return () => gatewayActivationEpoch() === activationEpoch &&
-    route.connectionId === host.state.connectionId.get() &&
+    route.connectionId === (currentId ?? '') &&
     route.profile === host.state.profile.get() && host.state.gateway.get() === 'open'
+}
+
+function activeConnectionIdentity(): string | null {
+  const fromState = host.state.connectionId?.get?.() ?? null
+  const fromActive = typeof host.activeConnectionId === 'function' ? host.activeConnectionId() : null
+
+  return fromState ?? fromActive ?? null
 }
