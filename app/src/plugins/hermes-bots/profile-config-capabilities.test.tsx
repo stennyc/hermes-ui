@@ -224,7 +224,12 @@ describe('a build whose CapabilitiesView cannot route connections', () => {
       gateway: 'ambient-gateway',
       profile: { connectionId: 'local', profile: 'default' }
     })
-    expect(sdk.gatewayReads.count).toBe(1)
+    // `gateway` is read fresh on every ConnectorsTab render (`host.getGateway()`
+    // at the call site, not memoized), and jsdom re-renders the section — so pin
+    // the invariant (LOCAL surfaces DO read the ambient gateway, never zero),
+    // not the exact call count. The sharp edge this suite guards is the REMOTE
+    // bot failing closed to 0 reads, asserted explicitly in the test above.
+    expect(sdk.gatewayReads.count).toBeGreaterThanOrEqual(1)
   })
 })
 
