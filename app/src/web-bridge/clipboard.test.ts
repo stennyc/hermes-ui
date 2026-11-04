@@ -355,7 +355,7 @@ describe('contextMenuEdit', () => {
     warn.mockRestore()
   })
 
-  it('leaves the field untouched when the clipboard is empty', async () => {
+  it('leaves the field untouched when the clipboard is empty and arms the paste hint bar', async () => {
     const readText = vi.fn(async () => '')
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText } })
 
@@ -366,5 +366,29 @@ describe('contextMenuEdit', () => {
     await bridge.contextMenuEdit?.('paste')
 
     expect(input.value).toBe('ab')
+    // No scratch textarea: withEditableFocus already re-focused the target
+    // field, so the native Ctrl/Cmd+V lands directly in it. The only DOM
+    // artifact of the armed state is the visible hint bar.
+    expect(document.querySelector('textarea[data-hermes-paste-fallback]')).toBeNull()
+    expect(document.querySelector('[data-hermes-paste-fallback]')).not.toBeNull()
+  })
+
+  it('retires the hint bar after the grace window', () => {
+    vi.useFakeTimers()
+
+    const readText = vi.fn(async () => '')
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText } })
+
+    focusedContentEditable('')
+
+    const bridge = createWebBridge()
+
+    void bridge.contextMenuEdit?.('paste')
+
+    // 8s in: the bar swaps to the "could not be read" hint, then clears.
+    vi.advanceTimersByTime(8000)
+    vi.useRealTimers()
+
+    expect(document.querySelector('[data-hermes-paste-fallback]')).toBeNull()
   })
 })

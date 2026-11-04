@@ -1156,27 +1156,32 @@ export function createWebBridge(): Window['hermesDesktop'] {
       return
     }
 
-    // paste: the ONLY way a web page reads the system clipboard is the
-    // Clipboard API — secure context (localhost/https) plus user activation.
-    // Outside it the read is impossible; warn loudly instead of failing the
-    // way the old no-op did, and point at the always-working Ctrl/Cmd+V.
-    const readText = navigator.clipboard?.readText
-
-    if (!readText) {
-      console.warn('hermes: the browser can only read the system clipboard over localhost or https — use Ctrl/Cmd+V to paste')
-
-      return
-    }
-
+    // paste: the ONLY way a web page reads the system clipboard without a
+    // second keystroke is the Clipboard API — secure context (localhost/https)
+    // plus transient user activation. The call happens AFTER
+    // withEditableFocus's requestAnimationFrame, so the click that opened the
+    // menu has long consumed its activation and the read is refused in
+    // practice. When the read comes back empty, arm the fallback: a visible
+    // hint bar; the target field is already re-focused, so the user's next
+    // NATIVE Ctrl/Cmd+V inserts the clipboard content directly into it (the
+    // field's own pipeline — chips, linkify, composer state — handles the
+    // insertion exactly as it would for a keyboard paste). Outside a secure
+    // context the API doesn't exist at all — warn and arm the same fallback.
     let text = ''
 
     try {
-      text = await readText.call(navigator.clipboard)
+      text = await navigator.clipboard?.readText?.() ?? ''
     } catch {
-      return
+      text = ''
     }
 
     if (!text) {
+      if (!navigator.clipboard) {
+        console.warn('hermes: the browser can only read the system clipboard over localhost or https — press Ctrl/Cmd+V to paste into the focused field')
+      }
+
+      armPasteFallback()
+
       return
     }
 
@@ -1190,6 +1195,59 @@ export function createWebBridge(): Window['hermesDesktop'] {
       document.execCommand('insertText', false, text)
     }
   }
+
+// The paste fallback when the Clipboard API read was refused (transient
+// activation consumed by the menu click's rAF chain) or when there is no
+// Clipboard API at all (non-secure context). withEditableFocus has already
+// re-focused the target field before invoking us, so the user's next NATIVE
+// Ctrl/Cmd+V inserts the clipboard content directly into the field — the
+// field's own pipeline (chips, linkify, composer state) handles it exactly
+// as it would for a keyboard paste. The armed state is a visible hint bar
+// plus a grace timer: if nothing lands after 8s the bar says so plainly and
+// clears itself. One instance at a time: a new paste request replaces
+// whatever is showing.
+//
+// Module-level so two concurrently-minted bridges (a test + the app) can
+// never share state: a newer arm clears the older one's timer and bar.
+const pasteFallbackState: {
+  bar: HTMLElement | null
+  timer: number
+} = { bar: null, timer: 0 }
+
+const clearPasteFallback = () => {
+  if (pasteFallbackState.bar === null) {
+    return
+  }
+
+  window.clearTimeout(pasteFallbackState.timer)
+  pasteFallbackState.bar.remove()
+  pasteFallbackState.bar = null
+}
+
+/** Show the armed paste hint bar. Idempotent: re-arming clears the older
+ *  instance first. Call from the paste path when the Clipboard API read
+ *  could not deliver the text. */
+const armPasteFallback = () => {
+  clearPasteFallback()
+
+  const bar = document.createElement('div')
+
+  bar.dataset.hermesPasteFallback = ''
+  bar.textContent =
+    navigator.platform?.toLowerCase().includes('mac') ? 'Press ⌘V to paste into Hermes' : 'Press Ctrl+V to paste into Hermes'
+  bar.style.cssText =
+    'position:fixed;left:50%;top:24px;transform:translateX(-50%);z-index:2147483647;padding:6px 14px;border-radius:8px;' +
+    'background:var(--ui-bg-tertiary,#1c1c1f);color:var(--ui-text-secondary,#ccc);border:1px solid var(--ui-stroke-tertiary,#444);' +
+    'font-size:0.75rem;pointer-events:none'
+  document.body.append(bar)
+  pasteFallbackState.bar = bar
+
+  pasteFallbackState.timer = window.setTimeout(() => {
+    bar.textContent = 'The clipboard could not be read here — Ctrl/Cmd+V pastes normally'
+    bar.remove()
+    pasteFallbackState.bar = null
+  }, 8000)
+}
 
   const bridge: WebBridge = {
     getConnection: async profile => connection(profile),

@@ -1,12 +1,18 @@
-// Routes `navigator.clipboard.writeText` through Electron IPC, since the
-// renderer's clipboard API throws "Write permission denied" whenever the
-// document loses focus (e.g. clicking a portaled Radix dropdown). The IPC
-// path runs in the main process and is unconditional.
+// Routes `navigator.clipboard.writeText` through the desktop bridge, since
+// the renderer's clipboard API throws "Write permission denied" whenever the
+// document loses focus (e.g. clicking a portaled Radix dropdown). The bridge
+// path is unconditional.
+//
+// Only the WRITER is shimmed. The reader is deliberately left alone: in the
+// web build the bridge's readClipboard is the same navigator.clipboard
+// underneath, so a shim would only add recursion risk. The web bridge's own
+// contextMenuEdit paste path owns its fallback (armPasteFallback: the focused
+// target field receives a native Ctrl/Cmd+V; the bridge only shows a hint bar).
 
 export function installClipboardShim() {
-  const ipc = window.hermesDesktop?.writeClipboard
+  const desktop = window.hermesDesktop
 
-  if (!ipc || !navigator.clipboard) {
+  if (!desktop?.writeClipboard || !navigator.clipboard) {
     return
   }
 
@@ -14,7 +20,7 @@ export function installClipboardShim() {
 
   const writeText = async (text: string) => {
     try {
-      await ipc(text)
+      await desktop.writeClipboard(text)
     } catch {
       await native?.(text)
     }
