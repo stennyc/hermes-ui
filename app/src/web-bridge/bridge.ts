@@ -1053,6 +1053,144 @@ export function createWebBridge(): Window['hermesDesktop'] {
     ? navigator.clipboard.writeText.bind(navigator.clipboard)
     : undefined
 
+  // One write path for every caller that wants the system clipboard: the menu
+  // Copy buttons, contextMenuEdit('copy'|'cut'), and the shimmed
+  // navigator.clipboard.writeText alike. `false` means the system clipboard
+  // was NOT written — callers must surface that instead of claiming success.
+  const writeClipboardToSystem = async (text: string) => {
+    if (copyTextWithSelection(text)) {
+      return true
+    }
+
+    if (!nativeClipboardWriteText) {
+      return false
+    }
+
+    try {
+      await nativeClipboardWriteText(text)
+
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  // The custom context menu's edit verbs. Electron owns these in main
+  // (`contents.copy/cut/paste/selectAll` on the sender's focused element); the
+  // web bridge re-implements them on document.activeElement. The menu caller
+  // (app-context-menu's withEditableFocus) closes the Radix focus trap,
+  // re-focuses the field on the next frame, then invokes us — so activeElement
+  // IS the target field.
+  const contextMenuEdit = async (command: 'copy' | 'cut' | 'paste' | 'selectAll') => {
+    const active = document.activeElement as HTMLElement | null
+
+    if (!active) {
+      return
+    }
+
+    const isFormField = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement
+
+    if (command === 'selectAll') {
+      if (isFormField) {
+        active.select()
+      } else {
+        const range = document.createRange()
+
+        range.selectNodeContents(active)
+        const selection = window.getSelection()
+
+        selection?.removeAllRanges()
+        selection?.addRange(range)
+      }
+
+      return
+    }
+
+    // The selection's text: form fields carry it on the element (Chrome never
+    // reflects it into the document selection), contenteditable on the live
+    // selection.
+    const start = isFormField ? (active.selectionStart ?? 0) : 0
+    const end = isFormField ? (active.selectionEnd ?? 0) : 0
+    const selected = isFormField ? active.value.slice(start, end) : (window.getSelection()?.toString() ?? '')
+
+    if (command === 'copy') {
+      if (selected) {
+        await writeClipboardToSystem(selected)
+      }
+
+      return
+    }
+
+    // The form-field value pipeline: React shadows `value` with its own
+    // accessor, so assign through the prototype setter and fire the input
+    // event the framework subscribes to (the act-in-page pattern).
+    const setFormValue = (element: HTMLInputElement | HTMLTextAreaElement, next: string) => {
+      const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
+
+      if (setter) {
+        setter.call(element, next)
+      } else {
+        element.value = next
+      }
+    }
+
+    if (command === 'cut') {
+      if (!selected) {
+        return
+      }
+
+      if (!(await writeClipboardToSystem(selected))) {
+        // Nothing left to cut with — keep the text rather than lose it.
+        return
+      }
+
+      if (isFormField) {
+        setFormValue(active, active.value.slice(0, start) + active.value.slice(end))
+        active.dispatchEvent(new InputEvent('input', { data: '', inputType: 'deleteContent', bubbles: true }))
+        active.setSelectionRange(start, start)
+      } else if (!document.execCommand('delete')) {
+        // execCommand failed: no delete, no clipboard — the selection stays.
+      }
+
+      return
+    }
+
+    // paste: the ONLY way a web page reads the system clipboard is the
+    // Clipboard API — secure context (localhost/https) plus user activation.
+    // Outside it the read is impossible; warn loudly instead of failing the
+    // way the old no-op did, and point at the always-working Ctrl/Cmd+V.
+    const readText = navigator.clipboard?.readText
+
+    if (!readText) {
+      console.warn('hermes: the browser can only read the system clipboard over localhost or https — use Ctrl/Cmd+V to paste')
+
+      return
+    }
+
+    let text = ''
+
+    try {
+      text = await readText.call(navigator.clipboard)
+    } catch {
+      return
+    }
+
+    if (!text) {
+      return
+    }
+
+    if (isFormField) {
+      setFormValue(active, active.value.slice(0, start) + text + active.value.slice(end))
+      active.dispatchEvent(new InputEvent('input', { data: text, inputType: 'insertText', bubbles: true }))
+      active.setSelectionRange(start + text.length, start + text.length)
+    } else {
+      // execCommand('insertText') fires the real editing pipeline the
+      // composer's React binding subscribes to (the act-in-page trick).
+      document.execCommand('insertText', false, text)
+    }
+  }
+
   const bridge: WebBridge = {
     getConnection: async profile => connection(profile),
     getConnectionFor: async ({ connectionId, profile }) => connectionFor(connectionId ?? undefined, profile),
@@ -1117,8 +1255,18 @@ export function createWebBridge(): Window['hermesDesktop'] {
     setSecretStorageEncryption: async () => ({ on: false }),
     sshConfigHosts: async () => ({ hosts: [] }),
     sshResolveHost: async () => ({ hostname: null, identityFile: null, port: null, user: null }),
-    readClipboard: async () => '',
+    // The terminal's ⌘/Ctrl+V chord and its menu-paste gate both probe here.
+    // Unavailable outside a secure context (plain http://IP access) — report
+    // empty instead of throwing so the gate simply stays gray.
+    readClipboard: async () => {
+      try {
+        return (await navigator.clipboard?.readText?.()) ?? ''
+      } catch {
+        return ''
+      }
+    },
     savePastedText: async () => '',
+    contextMenuEdit,
     continueBootstrapLocal: async () => ({ ok: false }),
     findInPage: async () => ({ count: 0 }),
     stopFindInPage: async () => {},
@@ -1262,23 +1410,7 @@ export function createWebBridge(): Window['hermesDesktop'] {
       throw new Error('local file access is unavailable in the web app')
     },
     selectPaths: async () => [],
-    writeClipboard: async text => {
-      if (copyTextWithSelection(text)) {
-        return true
-      }
-
-      if (!nativeClipboardWriteText) {
-        return false
-      }
-
-      try {
-        await nativeClipboardWriteText(text)
-
-        return true
-      } catch {
-        return false
-      }
-    },
+    writeClipboard: writeClipboardToSystem,
     saveImageFromUrl: async url => {
       const opened = window.open(url, '_blank', 'noopener')
 

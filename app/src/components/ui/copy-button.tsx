@@ -20,7 +20,14 @@ export async function writeClipboardText(text: string) {
   }
 
   if (window.hermesDesktop?.writeClipboard) {
-    await window.hermesDesktop.writeClipboard(text)
+    const ok = await window.hermesDesktop.writeClipboard(text)
+
+    // The web bridge reports a failed system-clipboard write as `false`
+    // instead of throwing — surface it so the button doesn't claim success
+    // when the OS clipboard never changed.
+    if (ok === false) {
+      throw new Error('Clipboard write failed')
+    }
 
     return
   }
