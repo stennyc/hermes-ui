@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "vite --port 5174",
-    "build": "tsc -p . --noEmit && vite build",
+    "build": "tsc -p . --noEmit && HERMES_TERMINAL_PTY_ENDPOINT=ws://10.1.1.117:9201/api/pty vite build",
     "typecheck": "tsc -p . --noEmit",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
