@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#0a0a0a" />
+    <!-- clipboard-read grants navigator.clipboard.readText() to this origin
+         so the web bridge's contextMenuEdit('paste') can read the system
+         clipboard in one step instead of falling back to a hint bar. -->
+    <meta http-equiv="Permissions-Policy" content="clipboard-read=(self)" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Hermes" />
@@ -37,6 +41,176 @@
   </head>
   <body>
     <div id="root" class="scrollbar-dt"></div>
+    <script>
+      // === LOCAL DEV: FS+upload bridge shim (runs after main bundle; not part of hermes source) ===
+(function(){
+  function wrap() {
+    if (window.__hermesFsShimApplied && window.hermesDesktop && window.hermesDesktop.__hermesFsShimProxy) return;
+// fs-bridge-inject.js — browser-side pre-emptive bridge override for the 9200 web dashboard.
+// Installed by an inline script tag in the page, pre-bundle (head) and re-applied after the
+// module bundle finishes (body-end). Same-origin RELATIVE API paths so it works whether the
+// page was opened from loopback, Tailscale, or any other host.
+//
+// What it shadows (everything else on window.hermesDesktop is passed through unchanged):
+//   readFileDataUrl / readFileText  -> GET /api/fs/read-data-url (reads a real host path)
+//   saveImageBuffer                 -> POST /api/chat/image-upload (bytes -> 9200-side cache dir,
+//                                      returns the real on-disk path the UI then reads back)
+//   selectPaths                     -> [] (no native picker in a plain browser; matches the
+//                                      built-in web stub's behavior)
+//
+// Rationale: the built-in web bridge's saveImageBuffer just downloads the bytes into the user's
+// Downloads folder via downloadBlob() and returns a fabricated filename ('hermes-image.<ext>')
+// that no server-side read can ever resolve -> every paste-attach dies with "Could not read
+// hermes-image..png". This override instead uploads the bytes to 9200's own image-upload
+// endpoint (the mechanism hermes built specifically for browser-clipboard images the server
+// can't see) and returns the real, server-readable path that endpoint hands back.
+(function () {
+  const API_READ = '/api/fs/read-data-url'
+  const API_UPLOAD = '/api/chat/image-upload'
+
+  // Chunked bytes->base64: btoa(String.fromCharCode.apply(null, bytes)) overflows the
+  // JS call stack on large files ('Maximum call stack size exceeded') because apply
+  // builds one argument per byte; chunk the conversion so no call ever carries a big
+  // argument list (standard pattern, safe at any file size).
+  function bytesToBase64(bytes) {
+    const CHUNK = 0x8000
+    let out = ''
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      const chunk = bytes.subarray(i, Math.min(i + CHUNK, bytes.length))
+      out += String.fromCharCode.apply(null, chunk)
+    }
+    return btoa(out)
+  }
+
+  async function readRemoteDataUrl(path) {
+    const qs = new URLSearchParams({ path: path })
+    const res = await fetch(API_READ + '?' + qs.toString(), { cache: 'no-store', credentials: 'same-origin' })
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }
+    const j = await res.json()
+    return { ok: true, dataUrl: j.dataUrl || '' }
+  }
+
+  const shim = {
+    readFileDataUrl: async (path) => {
+      const r = await readRemoteDataUrl(path)
+      return r.ok ? r.dataUrl : r
+    },
+    readFileText: async (path) => {
+      const r = await readRemoteDataUrl(path)
+      if (!r.ok) return r
+      const b64 = r.dataUrl.split(';base64,').pop()
+      const text = atob(b64)
+      return { path: path, text: text, byteSize: text.length }
+    },
+    saveImageBuffer: async (data, ext, name) => {
+      const bytes = data instanceof Uint8Array ? data : new Uint8Array(data)
+      const mime = (typeof ext === 'string' && ext) ? (ext.startsWith('image/') ? ext : 'image/' + ext.replace(/^\./, '')) : 'application/octet-stream'
+      const b64 = bytesToBase64(bytes)
+      const dataUrl = `data:${mime};base64,${b64}`
+      const label = (typeof name === 'string' && name) ? name : ('hermes-image.' + String(ext || '').replace(/^\./, ''))
+      const res = await fetch(API_UPLOAD, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ data_url: dataUrl, filename: label })
+      })
+      if (!res.ok) throw new Error('image-upload HTTP ' + res.status)
+      const j = await res.json()
+      return j.path || label
+    },
+    selectPaths: async (opts) => {
+      var filter = (opts && opts.filter) || 'files'
+      var input = document.createElement('input')
+      input.type = 'file'
+      input.multiple = true
+      if (filter === 'images') input.accept = 'image/*'
+      input.style.display = 'none'
+      document.body.appendChild(input)
+      var picked = await new Promise(function (resolve) {
+        input.addEventListener('change', function () { resolve(input.files) })
+        input.click()
+      })
+      document.body.removeChild(input)
+      if (!picked || picked.length === 0) return []
+      var out = []
+      for (var i = 0; i < picked.length; i++) {
+        var f = picked[i]
+        var bytes = new Uint8Array(await f.arrayBuffer())
+        var mime = (filter === 'images') ? f.type || 'image/png' : 'application/octet-stream'
+        var b64 = bytesToBase64(bytes)
+        var dataUrl = 'data:' + mime + ';base64,' + b64
+        var label = f.name
+        var res
+        if (filter === 'images') {
+          res = await fetch('/api/chat/image-upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ data_url: dataUrl, filename: label })
+          })
+        } else {
+          var form = new FormData()
+          form.append('file', f, label)
+          form.append('path', '/root/.hermes/cache/uploads/' + label)
+          form.append('overwrite', 'true')
+          res = await fetch('/api/files/upload-stream', {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: form
+          })
+        }
+        if (!res.ok) {
+          var detail = ''
+          try { detail = (await res.json()).detail || '' } catch (_) {}
+          throw new Error('upload HTTP ' + res.status + (detail ? ': ' + detail : ''))
+        }
+        var j = await res.json()
+        out.push(j.path)
+      }
+      return out
+    }
+  }
+
+  const original = window.hermesDesktop
+
+  const bridge = new Proxy(original || {}, {
+    get(target, key) {
+      if (key in shim) return shim[key]
+      if (key === Symbol.toStringTag) return 'Object'
+      const v = target ? Reflect.get(target, key) : undefined
+      return typeof v === 'function' ? v.bind(target) : v
+    },
+    has(target, key) {
+      if (key in shim) return true
+      if (!target) return false
+      return key in target
+    },
+    ownKeys(target) {
+      if (!target) return Object.keys(shim)
+      const keys = new Set(Reflect.ownKeys(target))
+      Object.keys(shim).forEach(k => keys.add(k))
+      return [...keys]
+    },
+    getOwnPropertyDescriptor(target, key) {
+      if (key in shim) return { enumerable: true, configurable: true, value: shim[key] }
+      if (!target) return undefined
+      const d = Object.getOwnPropertyDescriptor(target, key)
+      if (!d) return undefined
+      return { ...d, value: typeof d.value === 'function' ? d.value.bind(target) : d.value }
+    }
+  })
+
+  window.hermesDesktop = bridge; bridge.__hermesFsShimProxy = true; window.__hermesFsShimApplied = true
+  console.info('[fs-bridge-inject] shadowing hermesDesktop: readFileDataUrl/readFileText -> /api/fs/read-data-url, saveImageBuffer -> /api/chat/image-upload')
+})()
+
+  }
+  document.addEventListener("DOMContentLoaded", function(){ wrap(); requestAnimationFrame(wrap); });
+})();
+    </script>
+
+    
+    
     <script>
       // Pre-hydration app-shell skeleton. The production app is one large
       // bundle that takes a couple of seconds to parse/evaluate before React
