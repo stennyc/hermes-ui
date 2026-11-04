@@ -308,7 +308,12 @@ export default defineConfig({
   // a redeploy (or dev restart) drops any persisted query blob whose data shape
   // may have changed. Computed once at config load.
   define: {
-    __HERMES_BUILD_ID__: JSON.stringify(String(Date.now()))
+    __HERMES_BUILD_ID__: JSON.stringify(String(Date.now())),
+    // Terminal PTY endpoint override (H-B-2): build-time injected global
+    // literal. Empty by default (desktop / unmodified builds keep the
+    // gateway's own /api/pty route). Set via env when building the APK:
+    //   HERMES_TERMINAL_PTY_ENDPOINT=ws://10.1.1.117:9201/api/pty
+    __HERMES_TERMINAL_PTY_ENDPOINT__: JSON.stringify(process.env.HERMES_TERMINAL_PTY_ENDPOINT ?? '')
   },
   plugins: [
     // driver.js v1.8's package.json exports map omits ./dist/driver.js.iife.js

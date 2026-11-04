@@ -25,6 +25,10 @@ import type { GatewayWsUrlResult } from '@hermes/shared'
 import { getApiRequestProfile } from '@/api/client'
 import type { HermesTerminalExit, HermesTerminalSession } from '@/global'
 
+// Build-time injected global literal (vite `define`, see vite.config.ts).
+// Empty string by default: the gateway's own /api/pty route is used.
+declare const __HERMES_TERMINAL_PTY_ENDPOINT__: string
+
 // ── T1 close codes (hermes_cli/web_routers/chat_ws.py, shell mode) ──────────
 const CLOSE_CHILD_EXITED = 4410 // child shell exited (keep-alive registry drain)
 const CLOSE_SUPERSEDED = 4409 // another socket took this attach token over
@@ -766,8 +770,31 @@ export function withPtyParams(wsUrl: string, params: Record<string, string>): st
 
 /** Resolve a dialable PTY URL from the ACTIVE registry source's `/api/ws`
  *  URL. Must be called immediately before opening the socket (tickets are
- *  single-use, 30s TTL). */
+ *  single-use, 30s TTL).
+ *
+ *  Build-time override: when the bundle is built with
+ *  `HERMES_TERMINAL_PTY_ENDPOINT` (vite define `__HERMES_TERMINAL_PTY_ENDPOINT__`),
+ *  this function dials that endpoint directly instead of the gateway's own
+ *  `/api/pty` route. The endpoint speaks the same T1 contract (raw PTY bytes,
+ *  `\x1b[RESIZE:c;r]` frames, close 4410/4400 semantics) — e.g. a self-built
+ *  web-SSH service on a Tailscale-private host. Desktop builds leave the
+ *  define empty, so this branch is dead code there. */
 export async function resolvePtyUrlFor(params: Record<string, string> = {}): Promise<string> {
+  const override = typeof __HERMES_TERMINAL_PTY_ENDPOINT__ === 'string' ? __HERMES_TERMINAL_PTY_ENDPOINT__ : ''
+
+  if (override) {
+    const url = new URL(override)
+    url.search = ''
+
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== '') {
+        url.searchParams.set(key, value)
+      }
+    }
+
+    return url.toString()
+  }
+
   const mint = window.hermesDesktop?.getGatewayWsUrl
 
   if (typeof mint !== 'function') {
