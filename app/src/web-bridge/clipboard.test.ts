@@ -340,8 +340,7 @@ describe('contextMenuEdit', () => {
     expect(inputEvents).toContain('insertText')
   })
 
-  it('warns and does nothing when the clipboard read is unavailable', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  it('arms the hint bar when the clipboard read is unavailable (non-secure context)', async () => {
     delete (navigator as { clipboard?: unknown }).clipboard
 
     const host = focusedContentEditable('')
@@ -350,9 +349,10 @@ describe('contextMenuEdit', () => {
 
     await bridge.contextMenuEdit?.('paste')
 
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Ctrl/Cmd+V'))
+    // No console.warn — the hint bar covers both "non-secure context" and
+    // "permission denied" in a single visible message.
     expect(host.textContent).toBe('')
-    warn.mockRestore()
+    expect(document.querySelector('[data-hermes-paste-fallback]')).not.toBeNull()
   })
 
   it('leaves the field untouched when the clipboard is empty and arms the paste hint bar', async () => {

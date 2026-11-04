@@ -1156,32 +1156,44 @@ export function createWebBridge(): Window['hermesDesktop'] {
       return
     }
 
-    // paste: the ONLY way a web page reads the system clipboard without a
-    // second keystroke is the Clipboard API — secure context (localhost/https)
-    // plus transient user activation. The call happens AFTER
-    // withEditableFocus's requestAnimationFrame, so the click that opened the
-    // menu has long consumed its activation and the read is refused in
-    // practice. When the read comes back empty, arm the fallback: a visible
-    // hint bar; the target field is already re-focused, so the user's next
-    // NATIVE Ctrl/Cmd+V inserts the clipboard content directly into it (the
-    // field's own pipeline — chips, linkify, composer state — handles the
-    // insertion exactly as it would for a keyboard paste). Outside a secure
-    // context the API doesn't exist at all — warn and arm the same fallback.
+    // paste: read the system clipboard via the Clipboard API.
+    //
+    // `clipboard-read` is NOT a Permissions-Policy feature (no <meta> tag,
+    // no HTTP header, no iframe `allow=` pre-grant). For a top-level
+    // document the browser auto-grants it through the Permissions API:
+    // the first `readText()` call in a focused document triggers a system
+    // permission prompt; once the user allows it the grant persists and
+    // every subsequent call resolves without further interaction. No
+    // transient-activation or user-gesture requirement blocks the read in
+    // Chromium — MDN documents this: "If a read isn't allowed by the spec
+    // and the document has focus, it triggers a request to use permission
+    // clipboard-read, and succeeds if the permission is granted."
+    //
+    // `withEditableFocus` has already re-focused the target field before
+    // invoking us, so the document HAS focus at the moment `readText`
+    // runs. When the read succeeds the text is inserted directly into the
+    // field through the same pipeline a native paste would use.
+    //
+    // The read still fails in two cases:
+    //  - the user has denied the permission prompt (Chromium auto-denies
+    //    after ~3 dismissals) -> `NotAllowedError`, `text` stays ''
+    //  - non-secure context (plain http://IP without localhost/https):
+    //    `navigator.clipboard` is undefined -> `text` stays ''
+    // In both cases we arm the hint bar; the user can retry via the
+    // browser's site settings (chrome://settings/content/clipboard) or
+    // just Ctrl/Cmd+V the focused field.
     let text = ''
 
-    try {
-      text = await navigator.clipboard?.readText?.() ?? ''
-    } catch {
-      text = ''
+    if (navigator.clipboard?.readText) {
+      try {
+        text = await navigator.clipboard.readText()
+      } catch {
+        text = ''
+      }
     }
 
     if (!text) {
-      if (!navigator.clipboard) {
-        console.warn('hermes: the browser can only read the system clipboard over localhost or https — press Ctrl/Cmd+V to paste into the focused field')
-      }
-
       armPasteFallback()
-
       return
     }
 
@@ -1234,7 +1246,9 @@ const armPasteFallback = () => {
 
   bar.dataset.hermesPasteFallback = ''
   bar.textContent =
-    navigator.platform?.toLowerCase().includes('mac') ? 'Press ⌘V to paste into Hermes' : 'Press Ctrl+V to paste into Hermes'
+    navigator.platform?.toLowerCase().includes('mac')
+      ? 'Press ⌘V to paste — or allow the browser to read the clipboard, then retry'
+      : 'Press Ctrl+V to paste — or allow the browser to read the clipboard, then retry'
   bar.style.cssText =
     'position:fixed;left:50%;top:24px;transform:translateX(-50%);z-index:2147483647;padding:6px 14px;border-radius:8px;' +
     'background:var(--ui-bg-tertiary,#1c1c1f);color:var(--ui-text-secondary,#ccc);border:1px solid var(--ui-stroke-tertiary,#444);' +
