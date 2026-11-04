@@ -24,6 +24,10 @@ function setup() {
     configurable: true,
     value: { writeClipboard: vi.fn().mockResolvedValue(undefined) }
   })
+  // An Electron-shaped bridge: present and WITHOUT `terminal` the web
+  // platform probe cannot distinguish, so pin the test to desktop behavior
+  // by giving the bridge a terminal member (isWebPlatform → false).
+  Object.defineProperty((window as unknown as { hermesDesktop: Record<string, unknown> }).hermesDesktop, 'terminal', { value: {}, configurable: true })
   render(
     <MemoryRouter>
       <AppContextMenu />
