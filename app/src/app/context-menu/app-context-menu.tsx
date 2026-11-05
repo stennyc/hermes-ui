@@ -21,6 +21,7 @@ import { hostPathLabel, hudForcesNativeLinks, normalizeExternalUrl, openExternal
 import { formatCombo } from '@/lib/keybinds/combo'
 import { isRemoteGateway } from '@/lib/media'
 import { reachablePreviewUrl } from '@/lib/preview-reach'
+import { isWebPlatform } from '@/lib/web-platform'
 import { openPreview } from '@/store/preview'
 
 import { ShellMenuItems } from './shell-menu-items'
@@ -550,8 +551,10 @@ export function AppContextMenu() {
     // image-coordinate context-menu event only for a non-prevented gesture,
     // and with no Menu.popup anywhere "default" means no native menu at all.
     // The web build is the same: an un-prevented gesture shows the browser's
-    // native right-click menu behind our own, which is acceptable — the Radix
-    // menus for each region still sit on top.
+    // native right-click menu behind our own — acceptable on trigger-owned
+    // regions (each has its own Radix menu on top), so we only prevent the
+    // default on the shell fallback path at the bottom, where the gesture is
+    // handed to the app menu.
     const onContextMenu = (event: MouseEvent) => {
       const element = event.target instanceof Element ? event.target : null
 
@@ -606,6 +609,13 @@ export function AppContextMenu() {
       // opens the link menu.
       if (!owned && element?.closest(`[${CONTEXT_MENU_SKIP_ATTR}]`)) {
         return
+      }
+
+      // The shell fallback menu takes over this bare right-click. Withhold the
+      // browser's native menu on the web build so it does not stack on top of
+      // ours.
+      if (isWebPlatform()) {
+        event.preventDefault()
       }
 
       event.stopPropagation()
