@@ -21,7 +21,6 @@ import { hostPathLabel, hudForcesNativeLinks, normalizeExternalUrl, openExternal
 import { formatCombo } from '@/lib/keybinds/combo'
 import { isRemoteGateway } from '@/lib/media'
 import { reachablePreviewUrl } from '@/lib/preview-reach'
-import { isWebPlatform } from '@/lib/web-platform'
 import { openPreview } from '@/store/preview'
 
 import { ShellMenuItems } from './shell-menu-items'
@@ -550,16 +549,10 @@ export function AppContextMenu() {
     // left un-prevented on purpose: the main process emits the spellcheck +
     // image-coordinate context-menu event only for a non-prevented gesture,
     // and with no Menu.popup anywhere "default" means no native menu at all.
-    // The web build has NO main-process menu — an un-prevented gesture would
-    // let the browser's native right-click menu open on top of ours, so there
-    // we call preventDefault() to suppress it. Preventing default never blocks
-    // our own JS listeners (Radix triggers included), so custom menus still
-    // open; only the native OS menu is withheld.
+    // The web build is the same: an un-prevented gesture shows the browser's
+    // native right-click menu behind our own, which is acceptable — the Radix
+    // menus for each region still sit on top.
     const onContextMenu = (event: MouseEvent) => {
-      if (isWebPlatform()) {
-        event.preventDefault()
-      }
-
       const element = event.target instanceof Element ? event.target : null
 
       const trigger = element?.closest(`[${HERMES_CONTEXT_MENU_TRIGGER_ATTR}], [data-slot="context-menu-trigger"]`)
