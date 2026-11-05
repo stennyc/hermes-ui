@@ -2,7 +2,6 @@ import { beforeEach, expect, it, vi } from 'vitest'
 
 import type * as ClientApi from './client'
 
-vi.mock('@/lib/legacy-session-owner-backfill', () => ({ maybeBackfillLegacySessionOwners: vi.fn() }))
 vi.mock('@/store/transcript-tail', () => ({ recordTranscriptTail: vi.fn() }))
 vi.mock('./client', async importOriginal => ({
   ...await importOriginal<typeof ClientApi>(), hermesApi: vi.fn()

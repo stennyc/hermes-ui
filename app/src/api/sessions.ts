@@ -1,5 +1,4 @@
 import { isMissingRestEndpoint, isUnroutedRestPath } from '@/lib/gateway-rpc'
-import { maybeBackfillLegacySessionOwners } from '@/lib/legacy-session-owner-backfill'
 import { stampRowsWithOwningConnection } from '@/lib/session-owner-stamp'
 import { pageHonorsLatestOrder, recordTranscriptTail } from '@/store/transcript-tail'
 import type {
@@ -78,12 +77,6 @@ function sessionScopeQuery(scope?: ProfileScope): string {
  * write shape for connection_id on backend-returned rows.
  */
 function stampActiveConnectionOwner(sessions: SessionInfo[]): SessionInfo[] {
-  // Durable half of the same ownership contract (#94724): enumeration under
-  // registry topology triggers the one-shot server-side owner backfill for
-  // the serving store when its owner is a single match. Fire-and-forget;
-  // idempotent server-side; never blocks or fails the list that triggered it.
-  maybeBackfillLegacySessionOwners()
-
   return stampRowsWithOwningConnection(sessions, getApiRequestConnection())
 }
 

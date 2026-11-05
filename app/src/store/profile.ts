@@ -196,12 +196,10 @@ export function refreshProfiles(): Promise<ProfileInfo[]> {
         profileAuthFailed = false
 
         if (epoch === profileListEpoch) {
-          // Ref gate: the gateway's 409 owner-backfill steady state (the owning
-          // gateway refuses every POST for this renderer's lifetime) plus the
-          // 1.5s live-status poll re-trigger refreshActiveProfile() on every
-          // session-store republish, and each 200 response here would republish
-          // $profiles with a FRESH array even when the list is byte-identical.
-          // That unconditional republish feeds useSubscribable /
+          // Ref gate: the 1.5s live-status poll re-trigger refreshActiveProfile()
+          // on every session-store republish, and each 200 response here would
+          // republish $profiles with a FRESH array even when the list is
+          // byte-identical. That unconditional republish feeds useSubscribable /
           // useSyncExternalStore churn until the tap-scheduler 50-depth guard
           // throws "Maximum update depth exceeded". Same list: no publication.
           const prevProfiles = $profiles.get()
