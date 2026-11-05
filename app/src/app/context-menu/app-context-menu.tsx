@@ -605,11 +605,7 @@ export function AppContextMenu() {
       const owned = Boolean(target.linkUrl || target.onImage || target.editable || selected)
 
       // A selection elsewhere in the same pane must not take its bare menu.
-      // Exception: on the WEB build a zone-body trigger's Radix menu cannot
-      // open (no main-process mount), so let the coordinator take the bare
-      // surface and serve the shell fallback instead. Desktop keeps Radix
-      // ownership — its menus mount fine and the zone action is reachable.
-      if (!owned && trigger && !(isWebPlatform() && trigger.hasAttribute('data-zone-body'))) {
+      if (!owned && trigger) {
         return
       }
 

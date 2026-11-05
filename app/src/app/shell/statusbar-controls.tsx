@@ -105,7 +105,6 @@ export function StatusbarControls({ className, leftItems = [], items = [], ...pr
             className
           )}
           data-slot="statusbar"
-          data-zone-body="statusbar"
           {...props}
         >
           {/* `overflow-x-clip` (not `overflow-x-auto`) so a wide status item — for
