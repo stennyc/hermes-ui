@@ -1350,8 +1350,10 @@ export function useSessionActions({
 
       // Swap the single live gateway to this session's profile before any
       // gateway call (no-op when it's already on that profile / single-profile).
-      // resolveStoredSession finds the row by id (cheap), so an uncached pasted
-      // id loads as fast as a sidebar click instead of hanging on a list scan.
+      // resolveStoredSession reads a pinned owner or a cached row (P8: no by-id
+      // rung, no cross-profile sweep), so a remembered-owner hint plus a cache
+      // hit loads as fast as a sidebar click; an uncached id without an owner
+      // resolves to undefined and the resume stays on the ambient gateway.
       //
       // Only the REMEMBERED hint is validated (remembered-owner.ts); an explicitly captured owner
       // (requestSessionResume with a row route, a plugin open) is authoritative as given.
@@ -3026,11 +3028,15 @@ export function useSessionActions({
       clearNotifications()
 
       // Right-clicking a session outside the paginated sidebar window is a cache
-      // miss: resolve it (cache → active backend → cross-profile) so the branch
-      // is created on the parent's OWNING profile, not whichever is live (#67603).
-      // cachedSessionRow spans Recents, cron/messaging and the profile-scoped
-      // project tree, and prefers the self-describing row — an ownerless legacy
-      // Recents copy of the same id must not mask the row carrying the owner.
+      // miss: fall back to `resolveStoredSession`, which (P8) only ever reads a
+      // pinned owner or a CACHED row — no active by-id rung, no cross-profile
+      // sweep. Uncached + owner-less ids resolve to undefined and the branch
+      // lands on the ambient gateway; a session owned by another profile is
+      // opened by switching profiles first (#67603 family, owner ruling
+      // 2026-11-05). cachedSessionRow spans Recents, cron/messaging and the
+      // profile-scoped project tree, and prefers the self-describing row — an
+      // ownerless legacy Recents copy of the same id must not mask the row
+      // carrying the owner.
       const stored =
         cachedSessionRow(storedSessionId) ?? (sessionProfile ? undefined : await resolveStoredSession(storedSessionId))
 

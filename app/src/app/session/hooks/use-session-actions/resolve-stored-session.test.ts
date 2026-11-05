@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as HermesModule from '@/hermes'
 import { getSession } from '@/hermes'
-import { $activeGatewayProfile, $profiles, refreshProfiles } from '@/store/profile'
+import { $activeGatewayProfile, $profiles } from '@/store/profile'
 import { $projectTree } from '@/store/projects'
 import { $cronSessions, $messagingSessions, $sessions, $unlistedSessionOwnerRows } from '@/store/session'
 import { $removedSessionIds, tombstoneSessions, untombstoneSessions } from '@/store/session-removal'
@@ -15,19 +15,15 @@ vi.mock('@/hermes', async importActual => ({
   getSession: vi.fn()
 }))
 
-vi.mock('@/store/profile', async importActual => ({
-  ...(await importActual<typeof import('@/store/profile')>()),
-  refreshProfiles: vi.fn()
-}))
-
 const mockGetSession = vi.mocked(getSession)
-const mockRefreshProfiles = vi.mocked(refreshProfiles)
 
 const session = (over: Partial<SessionInfo>): SessionInfo => over as SessionInfo
 
 const profiles = (...names: string[]) => names.map(name => ({ name }) as never)
 
-describe('resolveStoredSession profile ownership', () => {
+const ownerRoute = { connectionId: 'remote-1', profile: 'meta', targetProfile: 'meta' }
+
+describe('resolveStoredSession profile ownership (P8: no cross-profile sweep)', () => {
   beforeEach(() => {
     $cronSessions.set([])
     $messagingSessions.set([])
@@ -73,86 +69,9 @@ describe('resolveStoredSession profile ownership', () => {
     expect($sessions.get()).toEqual([])
   })
 
-  it('routes a moved resolve into its current slice instead of duplicating it', async () => {
-    // Cross-room /resume rewrote the row to source='matrix' (#113827): the
-    // stale regular-sessions copy must go and the row must land in messaging.
-    $sessions.set([session({ id: 's1' })])
-    mockGetSession.mockResolvedValueOnce(session({ id: 's1', profile: 'meta', source: 'matrix' }))
-
-    const resolved = await resolveStoredSession('s1')
-
-    expect(resolved?.source).toBe('matrix')
-    expect($sessions.get()).toEqual([])
-    expect($messagingSessions.get().map(s => s.id)).toEqual(['s1'])
-  })
-
-  it('treats a profile-less cache hit as unresolved when multiple profiles exist', async () => {
-    $sessions.set([session({ id: 's1' })])
-    mockGetSession.mockRejectedValueOnce(new Error('404: Session not found'))
-    mockGetSession.mockResolvedValueOnce(session({ id: 's1', profile: 'default' }))
-
-    const resolved = await resolveStoredSession('s1')
-
-    expect(resolved?.profile).toBe('default')
-    // rung 2 (active profile, active read) then rung 3 (stamped cross-profile
-    // probe, passive read)
-    expect(mockGetSession).toHaveBeenNthCalledWith(1, 's1', 'meta')
-    expect(mockGetSession).toHaveBeenNthCalledWith(2, 's1', 'default', { passive: true })
-  })
-
-  it('runs the cross-profile rung as one concurrent probe batch, not a serial chain', async () => {
-    $activeGatewayProfile.set('default')
-    $profiles.set(profiles('default', 'a', 'b', 'c'))
-
-    // 'a' opens but settles last; 'b'/'c' open immediately. A serial chain
-    // would not open 'b' until 'a' settled — the start-time assertion below
-    // is what actually proves the probes overlapped.
-    const opened: string[] = []
-    let aRelease!: (error: Error) => void
-    mockGetSession.mockImplementation((id, profile) => {
-      void id
-      opened.push(String(profile))
-      return profile === 'a'
-        ? new Promise<never>((_resolve, reject) => {
-            aRelease = reject
-          })
-        : Promise.reject(new Error('404: Session not found'))
-    })
-
-    const pending = resolveStoredSession('s1')
-    await vi.waitFor(() => expect(opened.slice(1)).toEqual(['a', 'b', 'c']))
-    aRelease(new Error('404: Session not found'))
-    const result = await pending
-
-    // Every profile 404ed -> unresolved -> undefined (the `gone` verdict the
-    // probe exposes is not a session, so resolveStoredSession returns undefined)
-    expect(result).toBeUndefined()
-    expect(mockGetSession).toHaveBeenCalledWith('s1', 'a', { passive: true })
-    expect(mockGetSession).toHaveBeenCalledWith('s1', 'b', { passive: true })
-    expect(mockGetSession).toHaveBeenCalledWith('s1', 'c', { passive: true })
-  })
-
-  it('scopes the first by-id lookup so a miss does not skip the active profile', async () => {
-    $activeGatewayProfile.set('brain')
-    $profiles.set(profiles('default', 'brain'))
-    mockGetSession.mockImplementation(async (id, profile) => {
-      if (profile === 'brain') {
-        return session({ id, profile: 'brain' })
-      }
-
-      throw new Error('404: Session not found')
-    })
-
-    const resolved = await resolveStoredSession('s1')
-
-    expect(resolved?.profile).toBe('brain')
-    expect(mockGetSession).toHaveBeenCalledWith('s1', 'brain')
-    expect(mockGetSession).not.toHaveBeenCalledWith('s1')
-    expect(mockGetSession).not.toHaveBeenCalledWith('s1', 'default')
-  })
-
-  it('accepts a profile-less cache hit for single-profile users', async () => {
-    $profiles.set(profiles('default'))
+  it('returns a profile-less cached row as-is without any by-id read', async () => {
+    // P8: the cached row is what the caller actually has; there is no longer an
+    // active-profile by-id rung or cross-profile probe to "upgrade" it.
     $sessions.set([session({ id: 's1' })])
 
     const resolved = await resolveStoredSession('s1')
@@ -161,69 +80,64 @@ describe('resolveStoredSession profile ownership', () => {
     expect(mockGetSession).not.toHaveBeenCalled()
   })
 
-  it('stamps the active profile on a bare by-id hit from an older backend', async () => {
-    mockGetSession.mockResolvedValueOnce(session({ id: 's1' }))
+  it('returns a cached row even when multiple profiles exist and the row has no profile', async () => {
+    $profiles.set(profiles('default', 'meta'))
+    $sessions.set([session({ id: 's1' })])
 
     const resolved = await resolveStoredSession('s1')
 
-    expect(resolved?.profile).toBe('meta')
-    expect(mockGetSession).toHaveBeenCalledWith('s1', 'meta')
-    // the upserted cache row is owned too, so the next hit short-circuits
-    expect($sessions.get().find(s => s.id === 's1')?.profile).toBe('meta')
+    expect(resolved?.id).toBe('s1')
+    expect(mockGetSession).not.toHaveBeenCalled()
   })
 
-  it('parks a hidden by-id hit off-list — canonical Bot Chats never get a sidebar row (#113273)', async () => {
-    // Opening a bot's chat resolves it by id; the backend row carries
-    // hidden=true. Listed, it would paint a Sessions row the refresh
-    // keep-list then holds open indefinitely.
+  it('returns undefined (inconclusive) when there is no cache row and no owner', async () => {
+    const resolved = await resolveStoredSession('s1')
+
+    expect(resolved).toBeUndefined()
+    expect(mockGetSession).not.toHaveBeenCalled()
+  })
+
+  it('never fans out to every profile when the owner is unknown', async () => {
+    $activeGatewayProfile.set('default')
+    $profiles.set(profiles('default', 'a', 'b', 'c'))
+    mockGetSession.mockRejectedValue(new Error('404: Session not found'))
+
+    const result = await resolveStoredSession('s1')
+
+    expect(result).toBeUndefined()
+    // No cross-profile sweep: at most the owner-routed call (none here) — zero calls.
+    expect(mockGetSession).not.toHaveBeenCalled()
+  })
+
+  it('stamps the active profile on a bare by-id hit from an older backend when an owner is pinned', async () => {
+    mockGetSession.mockResolvedValueOnce(session({ id: 's1' }))
+
+    const resolved = await resolveStoredSession('s1', ownerRoute as never)
+
+    expect(resolved?.profile).toBe('meta')
+    expect(mockGetSession).toHaveBeenCalledWith('s1', { connectionId: 'remote-1', profile: 'meta' })
+  })
+
+  it('parks a hidden owner-routed by-id hit off-list — canonical Bot Chats never get a sidebar row (#113273)', async () => {
     mockGetSession.mockResolvedValueOnce(session({ hidden: true, id: 's1' }))
 
-    const resolved = await resolveStoredSession('s1')
+    const resolved = await resolveStoredSession('s1', ownerRoute as never)
 
     expect(resolved?.hidden).toBe(true)
     expect($sessions.get()).toEqual([])
-    // owner resolution still finds the row on the off-list stub atom
     expect($unlistedSessionOwnerRows.get().find(s => s.id === 's1')?.hidden).toBe(true)
   })
 
-  it('returns an internal delegate child without promoting it into regular sessions', async () => {
+  it('returns an owner-routed internal delegate child without promoting it into regular sessions', async () => {
     mockGetSession.mockResolvedValueOnce(session({ id: 'child', is_internal_child: true }))
 
-    const resolved = await resolveStoredSession('child')
+    const resolved = await resolveStoredSession('child', ownerRoute as never)
 
-    expect(resolved).toMatchObject({ id: 'child', is_internal_child: true, profile: 'meta' })
+    expect(resolved).toMatchObject({ connection_id: 'remote-1', id: 'child', is_internal_child: true, profile: 'meta' })
     expect($sessions.get()).toEqual([])
   })
 
-  it('probed desktop profile overrides a remote backend answering as its own "default"', async () => {
-    // Per-profile remote override: Electron strips the desktop alias before
-    // forwarding, so the standalone backend stamps its backend-local root.
-    mockGetSession.mockRejectedValueOnce(new Error('404: Session not found'))
-    mockGetSession.mockResolvedValueOnce(session({ id: 's1', profile: 'default' }))
-    $activeGatewayProfile.set('default')
-    $profiles.set(profiles('default', 'meta'))
-
-    const resolved = await resolveStoredSession('s1')
-
-    expect(resolved?.profile).toBe('meta')
-    expect($sessions.get().find(s => s.id === 's1')?.profile).toBe('meta')
-  })
-
-  it('stamps the probed profile on a scoped hit from an older backend that omits it', async () => {
-    mockGetSession.mockRejectedValueOnce(new Error('404: Session not found'))
-    mockGetSession.mockResolvedValueOnce(session({ id: 's1' }))
-
-    const resolved = await resolveStoredSession('s1')
-
-    expect(resolved?.profile).toBe('default')
-    // the cached row is owned too — no unowned row is ever re-cached
-    expect($sessions.get().find(s => s.id === 's1')?.profile).toBe('default')
-  })
-
-  it('does not recache a by-id row while its session is tombstoned (#85163)', async () => {
-    // The archive row click's bubbled resume raced the tombstone: the by-id
-    // resolve started just before the archive, and its response must not
-    // re-insert the row the archive optimistically evicted.
+  it('does not recache an owner-routed by-id row while its session is tombstoned (#85163)', async () => {
     let resolveRequest!: (value: SessionInfo) => void
     mockGetSession.mockReturnValueOnce(
       new Promise<SessionInfo>(resolve => {
@@ -231,30 +145,25 @@ describe('resolveStoredSession profile ownership', () => {
       })
     )
 
-    const pending = resolveStoredSession('s1')
+    const pending = resolveStoredSession('s1', ownerRoute as never)
     tombstoneSessions(['s1'])
     resolveRequest(session({ archived: false, id: 's1' }))
 
-    await expect(pending).resolves.toMatchObject({ id: 's1' })
+    await expect(pending).resolves.toMatchObject({ connection_id: 'remote-1', id: 's1' })
     expect($sessions.get()).toEqual([])
     untombstoneSessions(['s1'])
   })
 
-  it('does not recache an archived by-id row', async () => {
-    // The direct lookup can also observe the archive itself: the backend row
-    // already carries archived=true while the tombstone is still settling.
+  it('does not recache an owner-routed archived by-id row', async () => {
     mockGetSession.mockResolvedValueOnce(session({ archived: true, id: 's1' }))
 
-    const resolved = await resolveStoredSession('s1')
+    const resolved = await resolveStoredSession('s1', ownerRoute as never)
 
     expect(resolved?.archived).toBe(true)
     expect($sessions.get()).toEqual([])
   })
 
-  it('does not recache a stale by-id row when its tombstone clears before the response', async () => {
-    // A failed archive rolls the row back (untombstone) while the by-id
-    // request is still in flight: the response raced the doomed row even
-    // though membership looks untouched.
+  it('does not recache a stale owner-routed by-id row when its tombstone clears before the response', async () => {
     let resolveRequest!: (value: SessionInfo) => void
     mockGetSession.mockReturnValueOnce(
       new Promise<SessionInfo>(resolve => {
@@ -263,7 +172,7 @@ describe('resolveStoredSession profile ownership', () => {
     )
     tombstoneSessions(['s1'])
 
-    const pending = resolveStoredSession('s1')
+    const pending = resolveStoredSession('s1', ownerRoute as never)
     untombstoneSessions(['s1'])
     resolveRequest(session({ archived: false, id: 's1' }))
 
@@ -271,9 +180,7 @@ describe('resolveStoredSession profile ownership', () => {
     expect($sessions.get()).toEqual([])
   })
 
-  it('does not recache a stale by-id row after an in-flight tombstone ABA cycle', async () => {
-    // Tombstone added AND removed while the request was in flight: membership
-    // is back to empty, but the generation moved, so the response is stale.
+  it('does not recache a stale owner-routed by-id row after an in-flight tombstone ABA cycle', async () => {
     let resolveRequest!: (value: SessionInfo) => void
     mockGetSession.mockReturnValueOnce(
       new Promise<SessionInfo>(resolve => {
@@ -281,7 +188,7 @@ describe('resolveStoredSession profile ownership', () => {
       })
     )
 
-    const pending = resolveStoredSession('s1')
+    const pending = resolveStoredSession('s1', ownerRoute as never)
     tombstoneSessions(['s1'])
     untombstoneSessions(['s1'])
     expect($removedSessionIds.get()).toEqual(new Set())
@@ -291,133 +198,29 @@ describe('resolveStoredSession profile ownership', () => {
     expect($sessions.get()).toEqual([])
   })
 
-  it('does not recache a stale cross-profile by-id row after an in-flight tombstone cycle', async () => {
-    let resolveProbe!: (value: SessionInfo) => void
+  it('verdicts an owner-routed 404 as gone when the cache is empty', async () => {
     mockGetSession.mockRejectedValueOnce(new Error('404: Session not found'))
-    mockGetSession.mockReturnValueOnce(
-      new Promise<SessionInfo>(resolve => {
-        resolveProbe = resolve
-      })
-    )
 
-    const pending = resolveStoredSession('s1')
-    await vi.waitFor(() => expect(mockGetSession).toHaveBeenCalledTimes(2))
-    tombstoneSessions(['s1'])
-    untombstoneSessions(['s1'])
-    resolveProbe(session({ archived: false, id: 's1' }))
+    const probe = await probeStoredSession('s1', ownerRoute as never)
 
-    await expect(pending).resolves.toMatchObject({ id: 's1', profile: 'default' })
-    expect($sessions.get()).toEqual([])
+    expect(probe).toEqual({ status: 'gone' })
   })
 
-  it('does not recache a stale owner-routed by-id row after an in-flight tombstone cycle', async () => {
-    let resolveRequest!: (value: SessionInfo) => void
-    mockGetSession.mockReturnValueOnce(
-      new Promise<SessionInfo>(resolve => {
-        resolveRequest = resolve
-      })
-    )
+  it('verdicts an owner-routed non-404 failure as inconclusive', async () => {
+    mockGetSession.mockRejectedValueOnce(new Error('503: gateway unavailable'))
 
-    const pending = resolveStoredSession('s1', {
-      connectionId: 'remote-1',
-      profile: 'meta',
-      targetProfile: 'meta'
-    } as never)
+    const probe = await probeStoredSession('s1', ownerRoute as never)
 
-    tombstoneSessions(['s1'])
-    untombstoneSessions(['s1'])
-
-    resolveRequest(session({ archived: false, id: 's1' }))
-
-    await expect(pending).resolves.toMatchObject({ connection_id: 'remote-1', id: 's1', profile: 'meta' })
-    expect(mockGetSession).toHaveBeenCalledWith('s1', { connectionId: 'remote-1', profile: 'meta' })
-    expect($sessions.get()).toEqual([])
-  })
-})
-
-describe('probeStoredSession cold-inventory guard', () => {
-  beforeEach(() => {
-    $cronSessions.set([])
-    $messagingSessions.set([])
-    $sessions.set([])
-    $projectTree.set([])
-    $removedSessionIds.set(new Set())
-    $profiles.set([])
-    $activeGatewayProfile.set('meta')
-    $unlistedSessionOwnerRows.set([])
-    mockGetSession.mockReset()
-    mockRefreshProfiles.mockReset()
+    expect(probe).toEqual({ status: 'inconclusive' })
   })
 
-  afterEach(() => {
-    $cronSessions.set([])
-    $messagingSessions.set([])
-    $sessions.set([])
-    $projectTree.set([])
-    $removedSessionIds.set(new Set())
-    $profiles.set([])
-    $activeGatewayProfile.set('default')
-    $unlistedSessionOwnerRows.set([])
-  })
+  it('short-circuits to a cached owner-routed row without calling getSession', async () => {
+    $sessions.set([session({ connection_id: 'remote-1', id: 's1', profile: 'meta' })])
 
-  it('refreshes the inventory before the cross-profile rung when $profiles is cold', async () => {
-    // The 9200 repro: first open after a backend switch, $profiles empty, the
-    // session lives on a profile that was never listed. Pre-patch the rung
-    // swept an empty set and the bare 404 leaked to the console.
-    mockRefreshProfiles.mockImplementation(async () => {
-      $profiles.set(profiles('default', 'meta'))
-      return profiles('default', 'meta')
-    })
-    // The active rung ('meta') 404s first; the guard then refreshes the
-    // cold inventory and the sweep finds the session on 'default'.
-    mockGetSession.mockImplementation(async (id, profile) => {
-      if (profile === 'default') {
-        return session({ id, profile: 'default' })
-      }
-      throw new Error('404: Session not found')
-    })
+    const probe = await probeStoredSession('s1', ownerRoute as never)
 
-    const result = await probeStoredSession('s1')
-
-    expect(mockRefreshProfiles).toHaveBeenCalledTimes(1)
-    // rung 2 (active 'meta') 404ed; the passive sweep (default) answered
-    // found — the guard is what made the inventory usable in the first
-    // place, not a second active-profile hit.
-    expect(mockGetSession).toHaveBeenCalledTimes(2)
-    expect(result).toMatchObject({ status: 'found', session: { id: 's1', profile: 'default' } })
-  })
-
-  it('skips the refresh when the inventory is already warm', async () => {
-    $profiles.set(profiles('default', 'meta'))
-    mockGetSession.mockResolvedValue(session({ id: 's1' }))
-
-    const result = await probeStoredSession('s1')
-
-    expect(mockRefreshProfiles).not.toHaveBeenCalled()
-    expect(result.status).toBe('found')
-  })
-
-  it('stays inconclusive when the inventory refresh fails', async () => {
-    mockRefreshProfiles.mockRejectedValue(new Error('503: backend unreachable'))
-    mockGetSession.mockRejectedValue(new Error('404: Session not found'))
-
-    const result = await probeStoredSession('s1')
-
-    // Nothing was actually probed, so an all-404s is no evidence of `gone`.
-    expect(result.status).toBe('inconclusive')
-    expect(mockGetSession).toHaveBeenCalledTimes(1)
-  })
-
-  it('still proactively finds the owner when the refresh lands a zero-profile inventory', async () => {
-    // A single-profile backend answers /api/profiles with []: that is a
-    // KNOWN (empty) inventory, so a full all-404s sweep is a true `gone`.
-    mockRefreshProfiles.mockResolvedValue([])
-    mockGetSession.mockRejectedValue(new Error('404: Session not found'))
-
-    const result = await probeStoredSession('s1')
-
-    expect(mockRefreshProfiles).toHaveBeenCalledTimes(1)
-    expect(result.status).toBe('gone')
+    expect(probe).toEqual({ status: 'found', session: expect.objectContaining({ id: 's1' }) })
+    expect(mockGetSession).not.toHaveBeenCalled()
   })
 })
 
@@ -444,10 +247,6 @@ describe('cachedSessionRow owner preference', () => {
   })
 
   it('prefers a self-describing project-tree row over an ownerless Recents duplicate', () => {
-    // The same conversation, listed twice: a legacy Recents row with no owner
-    // and the profile-scoped project-tree row the gateway stamped. Picking the
-    // Recents copy throws away the only routing information there is, and the
-    // branch then creates its child on whichever backend is active.
     $sessions.set([session({ cwd: '/wrong', id: 's1' })])
     $projectTree.set([projectNode([session({ connection_id: 'pandora', cwd: '/right', id: 's1', profile: 'work' })])])
 

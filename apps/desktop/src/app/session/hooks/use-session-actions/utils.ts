@@ -18,7 +18,7 @@ import { isLiveTailReplyId } from '@/lib/spoken-reply'
 import { reconcileApprovalModeForProfile } from '@/store/approval-mode'
 import { requestDesktopOnboardingForCredentialWarning } from '@/store/onboarding'
 import { pendingSnapshotFence, reconcilePendingSubmissions } from '@/store/pending-submissions'
-import { $activeGatewayProfile, $profiles, normalizeProfileKey, refreshProfiles } from '@/store/profile'
+import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 import { $projectTree } from '@/store/projects'
 import {
   $cronSessions,
@@ -2169,11 +2169,13 @@ export async function resolveStoredSession(
   return result.status === 'found' ? result.session : undefined
 }
 
-/** `resolveStoredSession` with the ladder's evidence kept: `gone` only when
- *  every rung answered an explicit session 404 (a 5xx, a network failure or a
- *  bare 404 from a proxy is `inconclusive`), and — without an owner — only once
- *  the profile inventory is known, or a single-profile sweep would vouch for
- *  ids that live on a profile not yet listed (#125678). */
+/** `resolveStoredSession` with the verdict kept: with an `ownerRoute`, a
+ *  single fail-closed by-id read on that owner (a 404 ⇒ `gone`, anything else
+ *  `inconclusive`). WITHOUT an owner, never a cross-profile sweep (P8, owner
+ *  ruling 2026-11-05): return the cached row if there is one, else
+ *  `inconclusive` — a 404 stays a 404 and no longer amplifies into N profile
+ *  4xx. Sessions owned by another profile than the active one are opened by
+ *  switching profiles, not by probing all of them. */
 export async function probeStoredSession(
   storedSessionId: string,
   ownerRoute?: SessionProfileRoute
@@ -2222,138 +2224,28 @@ export async function probeStoredSession(
     }
   }
 
-  // A row with no owning profile can't route a resume when more than one
-  // profile exists — a resume without a profile lands on whichever gateway is
-  // active (#67603 family, cross-profile open asymmetry). Treat such a hit as
-  // unresolved and fall through to the by-id lookups, which stamp ownership.
-  const multiProfile = $profiles.get().length > 1
-
-  if (cached && (cached.profile?.trim() || !multiProfile)) {
+  // No owner pinned and no cached owning row: there is no way to know which
+  // profile holds this id without a cross-profile sweep, and the sweep is
+  // gone (P8, owner ruling 2026-11-05). A caller WITHOUT an owner must not
+  // fan out; report the row it actually has, else inconclusive. 404 stays a
+  // 404 — it no longer amplifies into N profile 4xx.
+  if (cached) {
     return { status: 'found', session: cached }
   }
 
-  // Direct by-id on the active profile — one row lookup, no list scan. Electron
-  // routes an unscoped GET to the primary backend, which may not own the
-  // active profile. A 404 there used to skip that profile in the probes below,
-  // so the session was never found.
-  const activeKey = normalizeProfileKey($activeGatewayProfile.get())
-
-  try {
-    const session = await getSession(storedSessionId, activeKey)
-
-    // Older backends can omit `profile`; this request targeted the active
-    // profile, so back-fill that rather than caching an unowned row. A present
-    // stamp is preserved for backend compatibility.
-    session.profile ||= activeKey
-
-    upsertResolvedSession(session, storedSessionId, tombstoneGenerationsAtRequestStart)
-
-    return { status: 'found', session }
-  } catch (error) {
-    // Not on the active profile — fall through to the cross-profile probe.
-    recordFailure(error)
-  }
-
-  // Multi-profile only: probe each remaining profile by id (still one cheap
-  // lookup each) rather than pulling every profile's recent sessions. The
-  // first hit carries its owning `profile`, which routes the resume to the
-  // right backend. The active profile was already tried above.
-  //
-  // Probes run CONCURRENTLY (not a serial for-await loop) — a session living
-  // on a non-active profile previously costed the full serial round-trip
-  // through every earlier profile's 404 before the real one answered. First
-  // RESOLVED hit still wins and the settled probes keep counting toward the
-  // gone/inconclusive verdict, so this stays behaviorally identical to the
-  // serial loop (same `allGone` semantics, same `recordFailure` per probe).
-  // The per-profile 404 noise that made the serial version paint a red
-  // console line per profile is a `passive` read below.
-  //
-  // Cold-inventory guard: on the first open after a backend switch, or on a
-  // web surface that has not yet run refreshProfiles, $profiles is still
-  // empty. Sweeping an empty inventory leaves the cross-profile rung
-  // skipped and the bare 404 leaks to the console (the 9200 "session not
-  // found" loop). A single refreshProfiles() backfills $profiles atomically
-  // (in-flight dedup in store/profile), and the verdict below is now honest:
-  // every listed profile answered, so all-404s is a real `gone`, not a
-  // misdiagnosed cold start.
-  let otherProfiles = [...new Set($profiles.get().map((profile): string => normalizeProfileKey(profile.name)))]
-    .filter((key): key is string => key !== activeKey)
-
-  let inventoryRefreshed = false
-
-  if ($profiles.get().length === 0) {
-    try {
-      const refreshed = await refreshProfiles()
-
-      otherProfiles = [...new Set(refreshed.map((profile): string => normalizeProfileKey(profile.name)))]
-        .filter((key): key is string => key !== activeKey)
-      inventoryRefreshed = true
-    } catch {
-      // The inventory refresh failed (network/5xx): keep the rung's
-      // `inconclusive` verdict — nothing was actually probed, so an
-      // all-404s here is no evidence the session is gone.
-      return { status: 'inconclusive' }
-    }
-  }
-
-  const probePromises = otherProfiles.map(async (profile) => {
-    try {
-      const session = await getSession(storedSessionId, profile, { passive: true })
-
-      // Same ownership contract: the DESKTOP profile we explicitly probed is
-      // authoritative, whatever the scoped backend stamped (older backends
-      // omit the field; a per-profile remote override strips the alias before
-      // forwarding, so that backend answers as its own "default").
-      session.profile = profile
-
-      upsertResolvedSession(session, storedSessionId, tombstoneGenerationsAtRequestStart)
-
-      return { session, error: undefined as unknown }
-    } catch (error) {
-      // Not on this profile; verdict counts it via recordFailure.
-      recordFailure(error)
-      return { session: undefined, error }
-    }
-  })
-
-  for (const probe of probePromises) {
-    const { session, error } = await probe
-
-    if (session !== undefined) {
-      // First hit settles; drain the remaining settled probes so the
-      // `allGone` verdict (and its `recordFailure` bookkeeping) still sees
-      // every outcome, exactly like the serial loop did — only the ordering
-      // of the network work is now overlapped, not skipped.
-      for (const remaining of probePromises) {
-        await remaining.catch(() => undefined)
-      }
-
-      return { status: 'found', session }
-    }
-
-    void error
-  }
-
-  // A refresh that landed zero profiles is a KNOWN inventory (single-profile
-  // backend), so `allGone` over an empty sweep is still a true `gone`
-  // verdict. Without the guard above the condition reduces to the
-  // pre-patch check (store populated at call time); with it, a
-  // mid-call refresh keeps the verdict honest.
-  const inventoryKnown = $profiles.get().length > 0 || inventoryRefreshed
-  return { status: allGone && inventoryKnown ? 'gone' : 'inconclusive' }
+  return { status: 'inconclusive' }
 }
 
 /**
- * The profile that owns a stored session, resolved through the same
- * cache → active-backend → cross-profile ladder as `resolveStoredSession`.
+ * The profile that owns a stored session, resolved through
+ * `resolveStoredSession`: a pinned owner (single by-id read) or the cached
+ * row. Without either, it returns undefined — no cross-profile sweep (P8).
  *
- * Recovery `session.resume` calls (stale runtime id, session-not-found, wedged
- * loop) must re-register the conversation on ITS backend, not on whichever
- * profile happens to be live. Omitting the profile lets the gateway fall back to
- * the launch-profile DB (tui_gateway/server.py), which is how a session bleeds
- * from one profile into another (#67603, second symptom). A cache-only lookup
- * misses any session outside the paginated sidebar window, so route through the
- * resolver, which probes uncached ids across profiles.
+ * Recovery `session.resume` calls must re-register the conversation on ITS
+ * backend, not on whichever profile happens to be live. When the owning
+ * profile cannot be determined from the cache, `undefined` propagates and the
+ * resume lands on the ambient gateway — a session owned by another profile is
+ * opened by switching profiles, not by probing all of them.
  */
 export async function resolveSessionProfile(storedSessionId: null | string): Promise<string | undefined> {
   if (!storedSessionId) {
@@ -2366,13 +2258,14 @@ export async function resolveSessionProfile(storedSessionId: null | string): Pro
 }
 
 /**
- * The OWNER of a stored session through the same cache → active-backend →
- * cross-profile ladder, preferring the EXACT route when the resolved row is
- * connection-tagged (unified-list splice, optimistic create row, a carried
- * tag) over its bare profile. Session-scoped RPC dispatch uses this as the
- * async rung after the sync ladder (tile route → hint → row) misses, so a
+ * The OWNER of a stored session, preferring the EXACT route when the resolved
+ * row is connection-tagged (unified-list splice, optimistic create row, a
+ * carried tag) over its bare profile. Session-scoped RPC dispatch uses this as
+ * the async rung after the sync ladder (tile route → hint → row) misses, so a
  * registry-owned session never degrades to a profile-only route that dials a
- * different socket than the one holding its runtime.
+ * different socket than the one holding its runtime. Without a sync-ladder
+ * hit, falls back to `resolveStoredSession` — a pinned owner (single by-id
+ * read) or the cached row, never a cross-profile sweep (P8).
  */
 export async function resolveSessionOwner(storedSessionId: null | string): Promise<SessionOwnerScope> {
   if (!storedSessionId) {

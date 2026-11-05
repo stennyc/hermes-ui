@@ -3754,14 +3754,15 @@ describe('branchStoredSession desktop source tagging', () => {
     })
   })
 
-  // #67603: right-clicking a session outside the paginated sidebar window is a
-  // cache miss. Resolve its owning profile (cache → active → cross-profile) and
-  // swap to it before asking the backend to copy the transcript, so the fork is
-  // not created on whichever profile happens to be live.
-  it('resolves and swaps to the parent profile when the branched session is not cached', async () => {
+  // P8/B (#67603 family): right-clicking a session outside the paginated
+  // sidebar window is a cache miss. No cross-profile sweep and no active
+  // by-id rung (owner ruling 2026-11-05): without a cached owning row the
+  // resolver returns undefined and the branch lands on the ambient gateway —
+  // a session owned by another profile is opened by switching profiles first.
+  it('branches a non-cached session on the ambient gateway without a by-id read (P8)', async () => {
     setSessions([])
     vi.mocked(getAllSessionMessages).mockClear()
-    vi.mocked(getSession).mockResolvedValue(storedSession({ id: 'stored-parent', message_count: 1, profile: 'work' }))
+    vi.mocked(getSession).mockClear()
     vi.mocked(getAllSessionMessages).mockResolvedValue({
       messages: [{ content: 'branch me', role: 'user', timestamp: 1 }],
       session_id: 'stored-parent'
@@ -3787,12 +3788,12 @@ describe('branchStoredSession desktop source tagging', () => {
 
     await expect(branchStoredSession!('stored-parent')).resolves.toBe(true)
 
-    expect(ensureGatewayProfile).toHaveBeenCalledWith('work')
-    expect(getAllSessionMessages).not.toHaveBeenCalled()
-    // The create itself must carry the owning profile: in app-global remote
-    // mode the soft gateway swap alone is not enough — an omitted profile
-    // lands the branch on the launch (default) profile's state.db.
-    expect(createParams).toMatchObject({ parent_session_id: 'stored-parent', profile: 'work' })
+    // No owner available → no gateway profile swap, no by-id read at all.
+    expect(ensureGatewayProfile).not.toHaveBeenCalledWith('work')
+    expect(vi.mocked(getSession)).not.toHaveBeenCalled()
+    // The create carries no owning profile — the ambient gateway owns it.
+    expect(createParams).toMatchObject({ parent_session_id: 'stored-parent' })
+    expect(createParams?.profile).toBeUndefined()
 
     vi.mocked(getSession).mockReset()
   })
@@ -4159,19 +4160,34 @@ describe('resumeSession warm-cache mapping integrity', () => {
         storedLookup.resolve(
           storedSession({ id: 'stored-first-paint', connection_id: 'remote-linux', profile: 'work', message_count: 1 })
         )
+        // P8: in metadataOnly mode, ownerRoute is undefined → resolver returns
+        // undefined (no cache, no by-id) → the rest scope falls back to
+        // ambient ('default'), so the tail read hits the guessed-default entry
+        // until the resume RPC settles. The 'work'-scoped cached transcript is
+        // no longer a valid paint target — that owner is only reachable by
+        // switching profiles first. With ownerRoute, the pinned profile
+        // 'default' is used.
         await waitFor(() =>
-          expect(ensureGatewayAgent).toHaveBeenCalledWith('remote-linux', metadataOnly ? 'work' : 'default')
+          expect(ensureGatewayAgent).toHaveBeenCalledWith('remote-linux', 'default')
         )
-        expect($messages.get()).toEqual(cachedMessages)
+        expect($messages.get()).toEqual(metadataOnly ? [{ ...cachedMessages[0], id: 'guessed-default' }] : cachedMessages)
         gatewayReady.resolve()
         await waitFor(() =>
-          expect(getLatestSessionMessages).toHaveBeenCalledWith('stored-first-paint', {
-            connectionId: 'remote-linux',
-            profile: 'work'
-          })
+          expect(getLatestSessionMessages).toHaveBeenCalledWith(
+            'stored-first-paint',
+            {
+              connectionId: 'remote-linux',
+              // P8: without a pinned owner the rest scope falls back to the
+              // ambient profile ('default'); 'work' is unreachable without a
+              // cross-profile sweep.
+              profile: metadataOnly ? 'default' : 'work'
+            }
+          )
         )
         const provisional = $messages.get()
-        expect(provisional).toEqual(cachedMessages)
+        expect(provisional).toEqual(
+          metadataOnly ? [{ ...cachedMessages[0], id: 'guessed-default' }] : cachedMessages
+        )
         persisted.resolve({
           messages: [{ role: 'assistant', content: 'fresh persisted history', timestamp: 1 }],
           session_id: 'stored-first-paint'
@@ -6762,7 +6778,13 @@ describe('removeSession / archiveSession profile routing (#78836)', () => {
     expect($sessions.get()).toEqual([])
   })
 
-  it('resolves a profile-less messaging DELETE before drop, without leaking into recents', async () => {
+  it('refuses a profile-less messaging DELETE with multiple profiles instead of guessing (P8)', async () => {
+    // P8: a profile-less row has no cached owner and there is no by-id rung or
+    // cross-profile sweep to recover one. With more than one profile listed,
+    // the ownership guard (never fall through to the primary backend) aborts
+    // the delete before any RPC — the row stays in the messaging slice. A
+    // profile-less row is deletable only when the owning profile is stamped on
+    // the row itself or the user is on a single-profile setup.
     $sessionSeenCounts.set({
       winefox: { 'tg-1': 4 },
       default: { 'desk-keep': 2 }
@@ -6772,20 +6794,6 @@ describe('removeSession / archiveSession profile routing (#78836)', () => {
       default: ['desk-keep']
     })
     setMessagingSessions([storedSession({ id: 'tg-1', source: 'telegram', title: 'QQ/TG' })])
-    mockGetSession.mockImplementation(async (id: string, scope?: ProfileScope) => {
-      expect($messagingSessions.get().some(session => session.id === 'tg-1')).toBe(true)
-      const profile = scope && typeof scope === 'object' ? scope.profile : scope
-
-      if (!profile) {
-        throw new Error('404: Session not found')
-      }
-
-      if (profile === 'winefox') {
-        return storedSession({ id, profile: 'winefox', source: 'telegram' })
-      }
-
-      throw new Error('404: Session not found')
-    })
     mockDeleteSession.mockResolvedValue({ ok: true })
 
     const handle = await readyActions()
@@ -6793,13 +6801,14 @@ describe('removeSession / archiveSession profile routing (#78836)', () => {
       await handle.removeSession('tg-1')
     })
 
-    expect(mockGetSession).toHaveBeenCalled()
-    expect(mockDeleteSession).toHaveBeenCalledWith('tg-1', 'winefox')
-    expect($messagingSessions.get()).toEqual([])
-    expect($sessions.get()).toEqual([])
-    expect($sessionSeenCounts.get().winefox?.['tg-1']).toBeUndefined()
+    // No by-id read, no cross-profile probe, and no DELETE against a guessed
+    // owner: the guard bails and the row survives.
+    expect(mockGetSession).not.toHaveBeenCalled()
+    expect(mockDeleteSession).not.toHaveBeenCalled()
+    expect($messagingSessions.get().map(session => session.id)).toEqual(['tg-1'])
+    expect($sessionSeenCounts.get().winefox?.['tg-1']).toBe(4)
     expect($sessionSeenCounts.get().default?.['desk-keep']).toBe(2)
-    expect($unreadFinishedMarkers.get().winefox ?? []).not.toContain('tg-1')
+    expect($unreadFinishedMarkers.get().winefox).toEqual(['tg-1'])
     expect($unreadFinishedMarkers.get().default).toEqual(['desk-keep'])
   })
 
