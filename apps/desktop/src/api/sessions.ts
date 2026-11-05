@@ -715,6 +715,27 @@ export async function fetchStoredTranscriptAcrossBackends(id: string): Promise<S
 
   const connections = ($connectionsRegistry.get()?.connections ?? []) as Array<{ id?: string }>
 
+  // One ambient inventory read per backend: the row may live on a non-default
+  // profile's state.db (the 9200 `profiles/coder` repro). Sweeping every
+  // profile concurrently matches P2's getSession contract — passive reads, no
+  // cold-start on the reserved foreground slot, misses silently skipped.
+  const profileCandidatesFor = async (connectionId: string): Promise<string[]> => {
+    let names: string[] = []
+
+    try {
+      const inventory = await getProfiles({ connectionId })
+
+      names = inventory.profiles
+        .map(({ name }) => name)
+        .filter((name): name is string => Boolean(name))
+    } catch {
+      // Inventory read failed (network / 5xx) — keep the legacy single-probe
+      // shape rather than skipping the backend entirely.
+    }
+
+    return names.length ? names : ['default']
+  }
+
   for (const connection of connections) {
     const connectionId = connection.id?.trim()
 
@@ -722,11 +743,15 @@ export async function fetchStoredTranscriptAcrossBackends(id: string): Promise<S
       continue
     }
 
-    try {
-      return await getLatestSessionMessages(id, { connectionId, profile: 'default' })
-    } catch {
-      // Not on this backend (or it is unreachable); try the next.
+    const profiles = await profileCandidatesFor(connectionId)
+    const results = await Promise.all(profiles.map(profile => getLatestSessionMessages(id, { connectionId, profile }).catch(() => null)))
+    const hit = results.find((r): r is SessionMessagesResponse => r !== null)
+
+    if (hit !== undefined) {
+      return hit
     }
+
+    // No profile on this backend has the row — try the next backend.
   }
 
   return null

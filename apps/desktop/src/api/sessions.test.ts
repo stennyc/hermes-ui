@@ -17,11 +17,22 @@ vi.mock('./client', () => ({
 }))
 vi.mock('./profiles', () => ({ getProfiles: vi.fn() }))
 
+// The cross-backend sweep imports the connection registry lazily inside
+// fetchStoredTranscriptAcrossBackends; steer it at the module boundary so the
+// test can control which remote backends exist without a real registry.
+vi.mock('@/store/connection-registry-state', () => ({
+  $connectionsRegistry: { get: vi.fn() },
+  hasRegistryTopology: vi.fn(() => false),
+  registryConnectionKind: vi.fn()
+}))
+
 const client = await import('./client')
 const profilesModule = await import('./profiles')
+const connectionRegistry = await import('@/store/connection-registry-state')
 
 const {
   deleteSession,
+  fetchStoredTranscriptAcrossBackends,
   getSession,
   getLatestSessionMessages,
   renameSession,
@@ -464,5 +475,58 @@ describe('searchSessions profile scope', () => {
       path: '/api/sessions/search?q=zebra&profile=research',
       profile: 'research'
     })
+  })
+})
+describe('fetchStoredTranscriptAcrossBackends profile sweep (9200 unlisted-profile 404)', () => {
+  const remoteBackend = { connections: [{ id: 'remote-b' }] }
+  const transcript = (profileName: string) => ({ id: 'owner-session', messages: [], profile: profileName })
+
+  it('sweeps every profile on a remote backend when the row is on a non-default profile', async () => {
+    // Ambient read misses; the row lives on the remote backend's `coder` DB.
+    vi.mocked(connectionRegistry.$connectionsRegistry.get).mockReturnValue({ connections: remoteBackend.connections } as never)
+    vi.mocked(profilesModule.getProfiles).mockImplementation(async (scope: unknown) => {
+      const inventory = scope && typeof scope === 'object' && 'connectionId' in (scope as object) ? { profiles: [{ name: 'default' }, { name: 'coder' }] } : { profiles: [{ name: 'default' }] }
+
+      return inventory as unknown as ProfilesResponse
+    })
+    hermesApi.mockImplementation(async (request: { path: string; profile?: string }) => {
+      if (request.profile === 'coder' && request.path.includes('/messages')) {
+        return transcript('coder') as never
+      }
+
+      throw new Error('404: Session not found')
+    })
+
+    const resolved = await fetchStoredTranscriptAcrossBackends('owner-session')
+
+    expect(resolved).toMatchObject({ id: 'owner-session', profile: 'coder' })
+  })
+
+  it('falls back to the default profile list when the inventory read fails', async () => {
+  vi.mocked(connectionRegistry.$connectionsRegistry.get).mockReturnValue({ connections: remoteBackend.connections } as never)
+  vi.mocked(profilesModule.getProfiles).mockRejectedValue(new Error('503: Service Unavailable'))
+  // The inventory read fails → profileCandidatesFor falls back to
+  // ['default']; the default-profile probe hits.
+  hermesApi.mockImplementation(async (request: { path: string }) => {
+    if (request.path.includes('profile=default')) {
+      return transcript('default') as never
+    }
+
+    throw new Error('404: Session not found')
+  })
+
+  const resolved = await fetchStoredTranscriptAcrossBackends('owner-session')
+
+  expect(resolved).toMatchObject({ id: 'owner-session' })
+  })
+
+  it('returns null when every profile on every backend also misses', async () => {
+    vi.mocked(connectionRegistry.$connectionsRegistry.get).mockReturnValue({ connections: remoteBackend.connections } as never)
+    vi.mocked(profilesModule.getProfiles).mockResolvedValue({ profiles: [{ name: 'default' }, { name: 'coder' }] } as unknown as ProfilesResponse)
+    hermesApi.mockRejectedValue(new Error('404: Session not found'))
+
+    const resolved = await fetchStoredTranscriptAcrossBackends('missing')
+
+    expect(resolved).toBeNull()
   })
 })

@@ -4,6 +4,7 @@ import { stampRowsWithOwningConnection } from '@/lib/session-owner-stamp'
 import { pageHonorsLatestOrder, recordTranscriptTail } from '@/store/transcript-tail'
 import type {
   PaginatedSessions,
+  ProfileInfo,
   SessionInfo,
   SessionMessage,
   SessionMessagesResponse,
@@ -11,6 +12,7 @@ import type {
 } from '@/types/hermes'
 
 import { createSessionMutationClient, type SessionMutationIdentity, type SessionMutationSnapshot } from '../../../shared/src/session-http-mutations'
+import { getProfiles } from './profiles'
 
 import {
   ambientOwnerConnectionId,
@@ -25,6 +27,55 @@ import {
 } from './client'
 
 const SESSION_LIST_REQUEST_TIMEOUT_MS = 60_000
+
+/** The REST bridge's session-not-found verdict: a 404 that is a HANDLER verdict
+ *  ("Session not found" / not_found), not a route-missing 404 — the same two-part
+ *  test `probeStoredSession.recordFailure` uses for its gone/inconclusive ladder,
+ *  so the fallback and the resolver agree on what a sweep-wide miss means. */
+function isSessionNotFoundError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+
+  return /\b404\b/.test(message) && /session not found/i.test(message)
+}
+
+/** Cross-profile fallback for a by-id read that 404'd on the ambient profile:
+ *  the row lives on another profile's state.db (the 9200 `profiles/coder`
+ *  repro). The caller re-issues the read for every candidate profile
+ *  CONCURRENTLY (passive, so the sweep paints no red 4xx console rows and
+ *  never cold-starts a profile on the reserved foreground slot — the same
+ *  contract as the resolver's rung 3). The first RESOLVED hit stamps its
+ *  owning `profile` (the resolver's ownership contract) and settles; the
+ *  settled misses keep running so a later caller's verdict still sees every
+ *  outcome. A sweep-wide miss rethrows the ORIGINAL primary error — nothing
+ *  was lost that the caller could not already see. */
+async function withCrossProfileFallback<T extends { profile?: string }>(
+  candidates: string[],
+  probe: (profile: string) => Promise<T>,
+  primaryError: unknown
+): Promise<T> {
+  const outcomes = await Promise.all(
+    candidates.map(async profile => {
+      try {
+        return { hit: (await probe(profile)) as T | undefined, profile, error: undefined as unknown }
+      } catch (probeError) {
+        return { hit: undefined as T | undefined, profile, error: probeError }
+      }
+    })
+  )
+
+  for (const { hit, profile } of outcomes) {
+    if (hit !== undefined) {
+      hit.profile = profile
+
+      return hit
+    }
+  }
+
+  // Sweep-wide miss: the session is genuinely not on any listed profile.
+  // Rethrow the ORIGINAL primary error (callers match it; a fresh synthetic
+  // 404 would lose the passive-204 unwrapping done upstream).
+  throw primaryError
+}
 
 function sessionScoped(scope?: ProfileScope): { connectionId?: string; profile?: string } {
   if (scope === undefined || scope === null) {
@@ -508,26 +559,63 @@ export function searchSessions(query: string, profile?: null | string): Promise<
 // the given `profile`). The backend resolves exact ids and unique prefixes and
 // 404s when the id isn't on that profile — so a cheap by-id lookup replaces the
 // cross-profile list scan when locating an unknown id's owner.
+//
+// A UNPINNED read that 404s falls back to the owning profile (the row may
+// live on another profile's state.db — the 9200 `profiles/coder` repro).
 export function getSession(id: string, profile?: ProfileScope, options: { passive?: boolean } = {}): Promise<SessionInfo> {
   // Pin the read to the session's OWNER connection (#125372): the ambient dial
   // 404s on the wrong backend whenever two connections expose a same-named
   // profile.
   const scope = { ...sessionScoped(profile), ...sessionReadOwnerPin(id, profile) }
-  const suffix = scope.profile ? `?profile=${encodeURIComponent(scope.profile)}` : ''
 
-  return hermesApi<SessionInfo>({
-    ...scope,
-    path: `/api/sessions/${encodeURIComponent(id)}${suffix}`,
-    ...(options.passive ? { passive: true } : {})
-  }).catch((error: unknown) => {
-    // A passive by-id miss degrades to a 204 in the web bridge (no red 4xx
-    // row). Resolve it back to the same session-not-found error a caller's
-    // verdict match expects.
-    if (error && typeof error === 'object' && 'error' in error && error.error instanceof Error) {
-      throw error.error
+  // One request shape, parameterised by the profile. The sweep must keep the
+  // SAME connection pin and passive flag — it only overrides the profile —
+  // so it never re-routes the connection or cold-starts a profile on the
+  // reserved foreground slot. The 204 unwrap is identical for every issue.
+  const issue = (probeProfile: ProfileScope): Promise<SessionInfo> => {
+    const pin = probeProfile === profile ? scope : { ...sessionScoped(probeProfile), ...sessionReadOwnerPin(id, probeProfile) }
+    const probeSuffix = pin.profile ? `?profile=${encodeURIComponent(pin.profile)}` : ''
+
+    return hermesApi<SessionInfo>({
+      ...pin,
+      path: `/api/sessions/${encodeURIComponent(id)}${probeSuffix}`,
+      ...(options.passive ? { passive: true } : {})
+    }).catch((error: unknown) => {
+      // A passive by-id miss degrades to a 204 in the web bridge (no red 4xx
+      // row). Resolve it back to the same session-not-found error a caller's
+      // verdict match expects.
+      if (error && typeof error === 'object' && 'error' in error && error.error instanceof Error) {
+        throw error.error
+      }
+
+      throw error
+    })
+  }
+
+  // An explicitly pinned read (a caller-named profile, or an owner pin that
+  // resolved one) is fail-closed: that profile was chosen on purpose, and a
+  // 404 means the row is not there. Only an UNPINNED ambient read falls
+  // back — the 9200 repro is exactly "no profile named, row on another
+  // profile's DB".
+  if (profile !== undefined || scope.profile) {
+    return issue(profile)
+  }
+
+  return issue(profile).catch(async (error: unknown) => {
+    if (!isSessionNotFoundError(error)) {
+      throw error
     }
 
-    throw error
+    const inventory = await getProfiles().catch(() => ({ profiles: [] as ProfileInfo[] }))
+    const candidates = inventory.profiles
+      .map(({ name }) => name)
+      .filter((name): name is string => Boolean(name) && name !== (scope.profile ?? getApiRequestProfile() ?? 'default'))
+
+    return withCrossProfileFallback(
+      candidates,
+      profileName => issue({ profile: profileName } as ProfileScope),
+      error
+    )
   })
 }
 
@@ -694,6 +782,25 @@ export async function fetchStoredTranscriptAcrossBackends(id: string): Promise<S
 
   const connections = ($connectionsRegistry.get()?.connections ?? []) as Array<{ id?: string }>
 
+  // One ambient inventory read per backend: the row may live on a non-default
+  // profile's state.db (the 9200 `profiles/coder` repro). Sweeping every
+  // profile concurrently matches P2's getSession contract — passive reads, no
+  // cold-start on the reserved foreground slot, misses silently skipped.
+  const profileCandidatesFor = async (connectionId: string): Promise<string[]> => {
+    let names: string[] = []
+
+    try {
+      const inventory = await getProfiles({ connectionId })
+
+      names = inventory.profiles.map(({ name }) => name).filter((name): name is string => Boolean(name))
+    } catch {
+      // Inventory read failed (network / 5xx) — keep the legacy single-probe
+      // shape rather than skipping the backend entirely.
+    }
+
+    return names.length ? names : ['default']
+  }
+
   for (const connection of connections) {
     const connectionId = connection.id?.trim()
 
@@ -701,11 +808,15 @@ export async function fetchStoredTranscriptAcrossBackends(id: string): Promise<S
       continue
     }
 
-    try {
-      return await getLatestSessionMessages(id, { connectionId, profile: 'default' })
-    } catch {
-      // Not on this backend (or it is unreachable); try the next.
+    const profiles = await profileCandidatesFor(connectionId)
+    const results = await Promise.all(profiles.map(profile => getLatestSessionMessages(id, { connectionId, profile }).catch(() => null)))
+    const hit = results.find((r): r is SessionMessagesResponse => r !== null)
+
+    if (hit !== undefined) {
+      return hit
     }
+
+    // No profile on this backend has the row — try the next backend.
   }
 
   return null
