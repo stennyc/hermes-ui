@@ -18,7 +18,7 @@ import { isLiveTailReplyId } from '@/lib/spoken-reply'
 import { reconcileApprovalModeForProfile } from '@/store/approval-mode'
 import { requestDesktopOnboardingForCredentialWarning } from '@/store/onboarding'
 import { pendingSnapshotFence, reconcilePendingSubmissions } from '@/store/pending-submissions'
-import { $activeGatewayProfile, $profiles, normalizeProfileKey } from '@/store/profile'
+import { $activeGatewayProfile, $profiles, normalizeProfileKey, refreshProfiles } from '@/store/profile'
 import { $projectTree } from '@/store/projects'
 import {
   $cronSessions,
@@ -2267,8 +2267,34 @@ export async function probeStoredSession(
   // serial loop (same `allGone` semantics, same `recordFailure` per probe).
   // The per-profile 404 noise that made the serial version paint a red
   // console line per profile is a `passive` read below.
-  const otherProfiles = [...new Set($profiles.get().map(profile => normalizeProfileKey(profile.name)))]
+  //
+  // Cold-inventory guard: on the first open after a backend switch, or on a
+  // web surface that has not yet run refreshProfiles, $profiles is still
+  // empty. Sweeping an empty inventory leaves the cross-profile rung
+  // skipped and the bare 404 leaks to the console (the 9200 "session not
+  // found" loop). A single refreshProfiles() backfills $profiles atomically
+  // (in-flight dedup in store/profile), and the verdict below is now honest:
+  // every listed profile answered, so all-404s is a real `gone`, not a
+  // misdiagnosed cold start.
+  let otherProfiles = [...new Set($profiles.get().map(profile => normalizeProfileKey(profile.name)))]
     .filter(key => key !== activeKey)
+
+  let inventoryRefreshed = false
+
+  if ($profiles.get().length === 0) {
+    try {
+      const refreshed = await refreshProfiles()
+
+      otherProfiles = [...new Set(refreshed.map(profile => normalizeProfileKey(profile.name)))]
+        .filter(key => key !== activeKey)
+      inventoryRefreshed = true
+    } catch {
+      // The inventory refresh failed (network/5xx): keep the rung's
+      // `inconclusive` verdict — nothing was actually probed, so an
+      // all-404s here is no evidence the session is gone.
+      return { status: 'inconclusive' }
+    }
+  }
 
   const probePromises = otherProfiles.map(async profile => {
     try {
@@ -2308,7 +2334,13 @@ export async function probeStoredSession(
     void error
   }
 
-  return { status: allGone && $profiles.get().length > 0 ? 'gone' : 'inconclusive' }
+  // A refresh that landed zero profiles is a KNOWN inventory (single-profile
+  // backend), so `allGone` over an empty sweep is still a true `gone`
+  // verdict. Without the guard above the condition reduces to the
+  // pre-patch check (store populated at call time); with it, a
+  // mid-call refresh keeps the verdict honest.
+  const inventoryKnown = $profiles.get().length > 0 || inventoryRefreshed
+  return { status: allGone && inventoryKnown ? 'gone' : 'inconclusive' }
 }
 
 /**

@@ -2,20 +2,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as HermesModule from '@/hermes'
 import { getSession } from '@/hermes'
-import { $activeGatewayProfile, $profiles } from '@/store/profile'
+import { $activeGatewayProfile, $profiles, refreshProfiles } from '@/store/profile'
 import { $projectTree } from '@/store/projects'
 import { $cronSessions, $messagingSessions, $sessions, $unlistedSessionOwnerRows } from '@/store/session'
 import { $removedSessionIds, tombstoneSessions, untombstoneSessions } from '@/store/session-removal'
 import type { SessionInfo } from '@/types/hermes'
 
-import { cachedSessionRow, resolveStoredSession } from './utils'
+import { cachedSessionRow, probeStoredSession, resolveStoredSession } from './utils'
 
 vi.mock('@/hermes', async importActual => ({
   ...(await importActual<typeof HermesModule>()),
   getSession: vi.fn()
 }))
 
+vi.mock('@/store/profile', async importActual => ({
+  ...(await importActual<typeof import('@/store/profile')>()),
+  refreshProfiles: vi.fn()
+}))
+
 const mockGetSession = vi.mocked(getSession)
+const mockRefreshProfiles = vi.mocked(refreshProfiles)
 
 const session = (over: Partial<SessionInfo>): SessionInfo => over as SessionInfo
 
@@ -326,6 +332,92 @@ describe('resolveStoredSession profile ownership', () => {
     await expect(pending).resolves.toMatchObject({ connection_id: 'remote-1', id: 's1', profile: 'meta' })
     expect(mockGetSession).toHaveBeenCalledWith('s1', { connectionId: 'remote-1', profile: 'meta' })
     expect($sessions.get()).toEqual([])
+  })
+})
+
+describe('probeStoredSession cold-inventory guard', () => {
+  beforeEach(() => {
+    $cronSessions.set([])
+    $messagingSessions.set([])
+    $sessions.set([])
+    $projectTree.set([])
+    $removedSessionIds.set(new Set())
+    $profiles.set([])
+    $activeGatewayProfile.set('meta')
+    $unlistedSessionOwnerRows.set([])
+    mockGetSession.mockReset()
+    mockRefreshProfiles.mockReset()
+  })
+
+  afterEach(() => {
+    $cronSessions.set([])
+    $messagingSessions.set([])
+    $sessions.set([])
+    $projectTree.set([])
+    $removedSessionIds.set(new Set())
+    $profiles.set([])
+    $activeGatewayProfile.set('default')
+    $unlistedSessionOwnerRows.set([])
+  })
+
+  it('refreshes the inventory before the cross-profile rung when $profiles is cold', async () => {
+    // The 9200 repro: first open after a backend switch, $profiles empty, the
+    // session lives on a profile that was never listed. Pre-patch the rung
+    // swept an empty set and the bare 404 leaked to the console.
+    mockRefreshProfiles.mockImplementation(async () => {
+      $profiles.set(profiles('default', 'meta'))
+      return profiles('default', 'meta')
+    })
+    // The active rung ('meta') 404s first; the guard then refreshes the
+    // cold inventory and the sweep finds the session on 'default'.
+    mockGetSession.mockImplementation(async (id, profile) => {
+      if (profile === 'default') {
+        return session({ id, profile: 'default' })
+      }
+      throw new Error('404: Session not found')
+    })
+
+    const result = await probeStoredSession('s1')
+
+    expect(mockRefreshProfiles).toHaveBeenCalledTimes(1)
+    // rung 2 (active 'meta') 404ed; the passive sweep (default) answered
+    // found — the guard is what made the inventory usable in the first
+    // place, not a second active-profile hit.
+    expect(mockGetSession).toHaveBeenCalledTimes(2)
+    expect(result).toMatchObject({ status: 'found', session: { id: 's1', profile: 'default' } })
+  })
+
+  it('skips the refresh when the inventory is already warm', async () => {
+    $profiles.set(profiles('default', 'meta'))
+    mockGetSession.mockResolvedValue(session({ id: 's1' }))
+
+    const result = await probeStoredSession('s1')
+
+    expect(mockRefreshProfiles).not.toHaveBeenCalled()
+    expect(result.status).toBe('found')
+  })
+
+  it('stays inconclusive when the inventory refresh fails', async () => {
+    mockRefreshProfiles.mockRejectedValue(new Error('503: backend unreachable'))
+    mockGetSession.mockRejectedValue(new Error('404: Session not found'))
+
+    const result = await probeStoredSession('s1')
+
+    // Nothing was actually probed, so an all-404s is no evidence of `gone`.
+    expect(result.status).toBe('inconclusive')
+    expect(mockGetSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('still proactively finds the owner when the refresh lands a zero-profile inventory', async () => {
+    // A single-profile backend answers /api/profiles with []: that is a
+    // KNOWN (empty) inventory, so a full all-404s sweep is a true `gone`.
+    mockRefreshProfiles.mockResolvedValue([])
+    mockGetSession.mockRejectedValue(new Error('404: Session not found'))
+
+    const result = await probeStoredSession('s1')
+
+    expect(mockRefreshProfiles).toHaveBeenCalledTimes(1)
+    expect(result.status).toBe('gone')
   })
 })
 
