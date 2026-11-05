@@ -11,7 +11,6 @@ import type {
 } from '@/types/hermes'
 
 import { createSessionMutationClient, type SessionMutationIdentity, type SessionMutationSnapshot } from '../../../shared/src/session-http-mutations'
-import { getProfiles } from './profiles'
 
 import {
   ambientOwnerConnectionId,
@@ -628,65 +627,19 @@ async function completeTranscriptForOrderlessBackend(
 }
 
 /**
- * READ-ONLY stored-transcript lookup that never routes a live session
- * (#94724 no-owner recovery). Tries the ambient/primary store first, then
- * probes every registered NON-local connection by id — a REST read of a
- * backend's own state.db is side-effect free (a miss is a plain 404, no
- * session is minted or resumed anywhere), so probing across backends is safe
- * where live routing would be a guess. Returns null when no reachable
- * backend holds the transcript.
+ * READ-ONLY stored-transcript lookup on the CURRENT profile only. No
+ * cross-backend, no cross-profile fallback: default and every other profile
+ * are independent profile DBs, and reading one session id through another's
+ * is how the 9200 404 cascades started (owner ruling 2026-11-05). A miss on
+ * the current profile's store is a plain null — callers already have the
+ * `stored transcript unavailable` branch.
  */
 export async function fetchStoredTranscriptAcrossBackends(id: string): Promise<SessionMessagesResponse | null> {
   try {
     return await getLatestSessionMessages(id)
   } catch {
-    // Not on the ambient store — probe the registered backends below.
+    return null
   }
-
-  const { $connectionsRegistry } = await import('@/store/connection-registry-state')
-
-  const connections = ($connectionsRegistry.get()?.connections ?? []) as Array<{ id?: string }>
-
-  // One ambient inventory read per backend: the row may live on a non-default
-  // profile's state.db (the 9200 `profiles/coder` repro). Sweeping every
-  // profile concurrently matches P2's getSession contract — passive reads, no
-  // cold-start on the reserved foreground slot, misses silently skipped.
-  const profileCandidatesFor = async (connectionId: string): Promise<string[]> => {
-    let names: string[] = []
-
-    try {
-      const inventory = await getProfiles({ connectionId })
-
-      names = inventory.profiles
-        .map(({ name }) => name)
-        .filter((name): name is string => Boolean(name))
-    } catch {
-      // Inventory read failed (network / 5xx) — keep the legacy single-probe
-      // shape rather than skipping the backend entirely.
-    }
-
-    return names.length ? names : ['default']
-  }
-
-  for (const connection of connections) {
-    const connectionId = connection.id?.trim()
-
-    if (!connectionId || connectionId === 'local' || connectionId === getApiRequestConnection()) {
-      continue
-    }
-
-    const profiles = await profileCandidatesFor(connectionId)
-    const results = await Promise.all(profiles.map(profile => getLatestSessionMessages(id, { connectionId, profile }).catch(() => null)))
-    const hit = results.find((r): r is SessionMessagesResponse => r !== null)
-
-    if (hit !== undefined) {
-      return hit
-    }
-
-    // No profile on this backend has the row — try the next backend.
-  }
-
-  return null
 }
 
 /**

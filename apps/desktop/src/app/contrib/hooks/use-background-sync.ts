@@ -81,12 +81,12 @@ export function profileScopeForTranscriptSession(stored: ActiveTranscriptSession
   return stored.profile
 }
 
-/** P6 (owner ruling 2026-11-05): the caller owns the owning-profile choice, so the transcript read is a plain pinned read — no cross-profile owner fallback (P4's getSession sweep was how the 404 cascades started). Pinned reads and non-404 failures propagate untouched. */
-async function readTranscriptWithOwnerFallback(
+/** P6/P7 (owner ruling 2026-11-05): the caller owns the owning-profile choice — the transcript read is a plain pinned read with no cross-profile owner fallback. Pinned reads and non-404 failures propagate untouched. */
+function readTranscriptWithOwnerFallback(
   id: string,
   scope: ProfileScope,
   options: { passive?: boolean } = {}
-): Promise<ReturnType<typeof getLatestSessionMessages>> {
+): ReturnType<typeof getLatestSessionMessages> {
   return getLatestSessionMessages(id, scope, options)
 }
 
