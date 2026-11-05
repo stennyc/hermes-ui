@@ -236,37 +236,31 @@ describe('resolveActiveTranscriptSession', () => {
 })
 
 
-describe('unlisted-profile 404: transcript read falls back to the owning profile', () => {
+describe('P6: unpinned ambient transcript reads propagate 404 untouched (no owner-fallback sweep)', () => {
   const notFound = () => new Error('404: Session not found')
-  const ownerSession = (profileName: string) => ({ id: ACTIVE_STORED_ID, profile: profileName } as never)
 
   beforeEach(() => {
-    vi.mocked(getSession).mockReset()
     vi.mocked(getLatestSessionMessages).mockReset()
   })
 
-  it('an unpinned ambient read that 404s resolves the owner and re-reads pinned', async () => {
-    // 9200 `profiles/coder` repro: the ambient read lands on the shared
-    // backend's default state.db (row not there); the row lives on `coder`.
-    vi.mocked(getLatestSessionMessages)
-      .mockRejectedValueOnce(notFound())
-      .mockResolvedValueOnce(transcript('owner answer') as never)
-    vi.mocked(getSession).mockResolvedValue(ownerSession('coder'))
+  it('an unpinned ambient read that 404s propagates — the caller pins the owner instead', async () => {
+    // P6 (owner ruling 2026-11-05): the read wrapper is a plain pinned read.
+    // A 404 from an unpinned ambient scope is NOT re-resolved across profiles;
+    // the owning profile is carried by the caller (row/restore chain).
+    vi.mocked(getLatestSessionMessages).mockRejectedValue(notFound())
 
     const fixture = makeRefresh(() => ({ profile: undefined }) as never)
     fixture.state.messages = []
     publishSessionState(ACTIVE_RUNTIME_ID, fixture.state)
 
-    await fixture.refresh()
+    await fixture.refresh().catch(() => {})
 
-    expect(getSession).toHaveBeenCalledWith(ACTIVE_STORED_ID, undefined, { passive: undefined })
-    expect(getLatestSessionMessages).toHaveBeenLastCalledWith(ACTIVE_STORED_ID, 'coder', {})
-    expect(fixture.updateSessionState).toHaveBeenCalledTimes(1)
+    expect(getLatestSessionMessages).toHaveBeenCalledTimes(1)
+    expect(fixture.updateSessionState).not.toHaveBeenCalled()
   })
 
-  it('a pinned ownerRoute-built scope that 404s propagates without an owner lookup', async () => {
+  it('a pinned ownerRoute-built scope that 404s propagates (fail-closed)', async () => {
     vi.mocked(getLatestSessionMessages).mockRejectedValue(notFound())
-    vi.mocked(getSession).mockResolvedValue(ownerSession('coder'))
 
     const fixture = makeRefresh(() => ({ profile: 'beta' }) as never)
     fixture.state.messages = []
@@ -274,24 +268,6 @@ describe('unlisted-profile 404: transcript read falls back to the owning profile
 
     await fixture.refresh().catch(() => {})
 
-    // fail-closed: the deliberately pinned scope is not re-resolved.
-    expect(getSession).not.toHaveBeenCalled()
-    expect(getLatestSessionMessages).toHaveBeenCalledTimes(1)
-  })
-
-  it('a sweep-wide owner miss rethrows the original transcript 404', async () => {
-    vi.mocked(getLatestSessionMessages).mockRejectedValue(notFound())
-    vi.mocked(getSession).mockRejectedValue(notFound())
-
-    const fixture = makeRefresh(() => ({ profile: undefined }) as never)
-    fixture.state.messages = []
-    publishSessionState(ACTIVE_RUNTIME_ID, fixture.state)
-
-    await fixture.refresh().catch(() => {})
-
-    // getSession WAS consulted (unpinned read) but found nothing on any
-    // profile: the original 404 propagates, no re-issue.
-    expect(getSession).toHaveBeenCalledTimes(1)
     expect(getLatestSessionMessages).toHaveBeenCalledTimes(1)
     expect(fixture.updateSessionState).not.toHaveBeenCalled()
   })

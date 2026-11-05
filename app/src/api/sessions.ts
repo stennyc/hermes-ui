@@ -32,52 +32,6 @@ const SESSION_LIST_REQUEST_TIMEOUT_MS = 60_000
  *  ("Session not found" / not_found), not a route-missing 404 — the same two-part
  *  test `probeStoredSession.recordFailure` uses for its gone/inconclusive ladder,
  *  so the fallback and the resolver agree on what a sweep-wide miss means. */
-function isSessionNotFoundError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error ?? '')
-
-  return /\b404\b/.test(message) && /session not found/i.test(message)
-}
-
-/** Cross-profile fallback for a by-id read that 404'd on the ambient profile:
- *  the row lives on another profile's state.db (the 9200 `profiles/coder`
- *  repro). The caller re-issues the read for every candidate profile
- *  CONCURRENTLY (passive, so the sweep paints no red 4xx console rows and
- *  never cold-starts a profile on the reserved foreground slot — the same
- *  contract as the resolver's rung 3). The first RESOLVED hit is returned
- *  (for row-bearing types it is stamped with its owning `profile`); the
- *  settled misses keep running so a later caller's verdict still sees every
- *  outcome. A sweep-wide miss rethrows the ORIGINAL primary error — nothing
- *  was lost that the caller could not already see. */
-async function withCrossProfileFallback<T>(
-  candidates: string[],
-  probe: (profile: string) => Promise<T>,
-  primaryError: unknown,
-  stamp?: (hit: T, profile: string) => void
-): Promise<T> {
-  const outcomes = await Promise.all(
-    candidates.map(async profile => {
-      try {
-        return { hit: (await probe(profile)) as T | undefined, profile, error: undefined as unknown }
-      } catch (probeError) {
-        return { hit: undefined as T | undefined, profile, error: probeError }
-      }
-    })
-  )
-
-  for (const { hit, profile } of outcomes) {
-    if (hit !== undefined) {
-      stamp?.(hit, profile)
-
-      return hit
-    }
-  }
-
-  // Sweep-wide miss: the session is genuinely not on any listed profile.
-  // Rethrow the ORIGINAL primary error (callers match it; a fresh synthetic
-  // 404 would lose the passive-204 unwrapping done upstream).
-  throw primaryError
-}
-
 function sessionScoped(scope?: ProfileScope): { connectionId?: string; profile?: string } {
   if (scope === undefined || scope === null) {
     return {}
@@ -540,29 +494,19 @@ function mutateSessionHttp<T>(id: string, method: 'PATCH' | 'DELETE', payload: R
 
   // An explicitly pinned write (a caller-named profile, or an ambient request
   // profile) is fail-closed: that profile was chosen on purpose, and a 404
-  // means the row is not there. Only an UNPINNED ambient write falls back to
-  // the owning profile (the row may live on another profile's state.db — the
-  // 9200 `profiles/coder` repro), mirroring P2's getSession contract.
+  // means the row is not there.
+  //
+  // P6 (owner ruling 2026-11-05): NO cross-profile sweep on an ambient 404 —
+  // the same reasoning as the read path above. A write issued unpinned
+  // because the caller has no known owner propagates its 404 untouched; a
+  // write that knows its owner is already pinned. Sweeping every listed
+  // profile turned one ambient 404 into an N-way 404 cascade (the 9200
+  // repro).
   if (scope.profile || getApiRequestProfile()) {
     return attempt(profile)
   }
 
-  return attempt(profile).catch(async (error: unknown) => {
-    if (!isSessionNotFoundError(error)) {
-      throw error
-    }
-
-    const inventory = await getProfiles().catch(() => ({ profiles: [] as ProfileInfo[] }))
-    const candidates = inventory.profiles
-      .map(({ name }) => name)
-      .filter((name): name is string => Boolean(name) && name !== (getApiRequestProfile() ?? 'default'))
-
-    return withCrossProfileFallback(
-      candidates,
-      profileName => attempt({ profile: profileName } as ProfileScope),
-      error
-    )
-  })
+  return attempt(profile)
 }
 
 export function setSessionArchived(id: string, archived: boolean, profile?: string | null): Promise<{ ok: boolean }> {
@@ -603,58 +547,27 @@ export function getSession(id: string, profile?: ProfileScope, options: { passiv
   // 404s on the wrong backend whenever two connections expose a same-named
   // profile.
   const scope = { ...sessionScoped(profile), ...sessionReadOwnerPin(id, profile) }
+  const suffix = scope.profile ? `?profile=${encodeURIComponent(scope.profile)}` : ''
 
-  // One request shape, parameterised by the profile. The sweep must keep the
-  // SAME connection pin and passive flag — it only overrides the profile —
-  // so it never re-routes the connection or cold-starts a profile on the
-  // reserved foreground slot. The 204 unwrap is identical for every issue.
-  const issue = (probeProfile: ProfileScope): Promise<SessionInfo> => {
-    const pin = probeProfile === profile ? scope : { ...sessionScoped(probeProfile), ...sessionReadOwnerPin(id, probeProfile) }
-    const probeSuffix = pin.profile ? `?profile=${encodeURIComponent(pin.profile)}` : ''
-
-    return hermesApi<SessionInfo>({
-      ...pin,
-      path: `/api/sessions/${encodeURIComponent(id)}${probeSuffix}`,
-      ...(options.passive ? { passive: true } : {})
-    }).catch((error: unknown) => {
-      // A passive by-id miss degrades to a 204 in the web bridge (no red 4xx
-      // row). Resolve it back to the same session-not-found error a caller's
-      // verdict match expects.
-      if (error && typeof error === 'object' && 'error' in error && error.error instanceof Error) {
-        throw error.error
-      }
-
-      throw error
-    })
-  }
-
-  // An explicitly pinned read (a caller-named profile, or an owner pin that
-  // resolved one) is fail-closed: that profile was chosen on purpose, and a
-  // 404 means the row is not there. Only an UNPINNED ambient read falls
-  // back — the 9200 repro is exactly "no profile named, row on another
-  // profile's DB".
-  if (profile !== undefined || scope.profile) {
-    return issue(profile)
-  }
-
-  return issue(profile).catch(async (error: unknown) => {
-    if (!isSessionNotFoundError(error)) {
-      throw error
+  // P6 (owner ruling 2026-11-05): the CALLER knows the session's owning
+  // profile (sidebar rows carry it; the restore chain pins the active
+  // profile) — pass it here. There is NO cross-profile sweep: default and
+  // any other profile are independent, and reading one through the other is
+  // how the 404 cascades started. An unpinned read propagates its 404
+  // untouched.
+  return hermesApi<SessionInfo>({
+    ...scope,
+    path: `/api/sessions/${encodeURIComponent(id)}${suffix}`,
+    ...(options.passive ? { passive: true } : {})
+  }).catch((error: unknown) => {
+    // A passive by-id miss degrades to a 204 in the web bridge (no red 4xx
+    // row). Resolve it back to the same session-not-found error a caller's
+    // verdict match expects.
+    if (error && typeof error === 'object' && 'error' in error && error.error instanceof Error) {
+      throw error.error
     }
 
-    const inventory = await getProfiles().catch(() => ({ profiles: [] as ProfileInfo[] }))
-    const candidates = inventory.profiles
-      .map(({ name }) => name)
-      .filter((name): name is string => Boolean(name) && name !== (scope.profile ?? getApiRequestProfile() ?? 'default'))
-
-    return withCrossProfileFallback(
-      candidates,
-      profileName => issue({ profile: profileName } as ProfileScope),
-      error,
-      (row, profileName) => {
-        row.profile = profileName
-      }
-    )
+    throw error
   })
 }
 

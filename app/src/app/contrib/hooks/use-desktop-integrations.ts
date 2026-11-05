@@ -252,7 +252,7 @@ export function useDesktopIntegrations({
           // list omits. A delegate child repairs to its parent, an orphan or
           // foreign-profile id clears, and a fetch failure keeps the
           // remembered value for the next launch instead of discarding it.
-          void resolveRememberedSessionId(last, getSession)
+          void resolveRememberedSessionId(last, id => getSession(id, activeProfile))
             .then(remembered => {
               if (!remembered || !sessionBelongsToProfile(sessions, remembered, activeProfile)) {
                 setRememberedSessionId(null, activeProfile)
