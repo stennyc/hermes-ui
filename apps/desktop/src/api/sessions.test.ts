@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SidebarSessionsResponse } from './sessions'
 import type { ProfilesResponse } from '@/types/hermes'
 
-vi.mock('@/lib/gateway-rpc', () => ({ isMissingRestEndpoint: () => false }))
+vi.mock('@/lib/gateway-rpc', () => ({ isMissingRestEndpoint: () => false, isUnroutedRestPath: () => false }))
 vi.mock('@/store/transcript-tail', () => ({ pageHonorsLatestOrder: () => true, recordTranscriptTail: vi.fn() }))
 vi.mock('./client', () => ({
   ambientOwnerConnectionId: vi.fn(() => 'prometheus'),
@@ -17,17 +17,8 @@ vi.mock('./client', () => ({
 }))
 vi.mock('./profiles', () => ({ getProfiles: vi.fn() }))
 
-// The cross-backend sweep imports the connection registry lazily inside
-// fetchStoredTranscriptAcrossBackends; steer it at the module boundary so the
-// test can control which remote backends exist without a real registry.
-vi.mock('@/store/connection-registry-state', () => ({
-  $connectionsRegistry: { get: vi.fn() },
-  hasRegistryTopology: vi.fn(() => false),
-  registryConnectionKind: vi.fn()
-}))
-
 const client = await import('./client')
-const profilesModule = await import('./profiles')
+const profiles = await import('./profiles')
 const connectionRegistry = await import('@/store/connection-registry-state')
 
 const {
@@ -42,6 +33,15 @@ const {
   setSessionUnreadRemote,
   listSidebarSessions
 } = await import('./sessions')
+
+// The cross-backend sweep imports the connection registry lazily inside
+// fetchStoredTranscriptAcrossBackends; steer it at the module boundary so the
+// test can control which remote backends exist without a real registry.
+vi.mock('@/store/connection-registry-state', () => ({
+  $connectionsRegistry: { get: vi.fn() },
+  hasRegistryTopology: vi.fn(() => false),
+  registryConnectionKind: vi.fn()
+}))
 
 const hermesApi = vi.mocked(client.hermesApi)
 
@@ -160,7 +160,7 @@ describe('getSession cross-profile fallback (9200 unlisted-profile 404)', () => 
     // state.db (row not there); the row actually lives on `coder`'s
     // state.db. The sweep must probe every OTHER listed profile, stamp the
     // hit, and settle on it.
-    vi.mocked(profilesModule.getProfiles).mockResolvedValue({ profiles: [{ name: 'default' }, { name: 'coder' }] } as unknown as ProfilesResponse)
+    vi.mocked(profiles.getProfiles).mockResolvedValue({ profiles: [{ name: 'default' }, { name: 'coder' }] } as unknown as ProfilesResponse)
     hermesApi.mockImplementation(async (request: { path: string }) => {
       if (request.path.includes('?profile=coder')) {
         return sessionOn('coder')
@@ -177,14 +177,14 @@ describe('getSession cross-profile fallback (9200 unlisted-profile 404)', () => 
   })
 
   it('does not sweep when the ambient read already resolves', async () => {
-    vi.mocked(profilesModule.getProfiles).mockResolvedValue({ profiles: [{ name: 'default' }, { name: 'coder' }] } as unknown as ProfilesResponse)
+    vi.mocked(profiles.getProfiles).mockResolvedValue({ profiles: [{ name: 'default' }, { name: 'coder' }] } as unknown as ProfilesResponse)
     hermesApi.mockResolvedValue({ id: 'local-session' } as never)
 
     const resolved = await getSession('local-session')
 
     expect(hermesApi).toHaveBeenCalledTimes(1)
     expect(resolved).toMatchObject({ id: 'local-session' })
-    expect(profilesModule.getProfiles).not.toHaveBeenCalled()
+    expect(profiles.getProfiles).not.toHaveBeenCalled()
   })
 
   it('does not sweep an explicitly pinned read (fail-closed)', async () => {
@@ -194,7 +194,7 @@ describe('getSession cross-profile fallback (9200 unlisted-profile 404)', () => 
 
     // Exactly one request: the pinned one. No inventory read, no sweep.
     expect(hermesApi).toHaveBeenCalledTimes(1)
-    expect(profilesModule.getProfiles).not.toHaveBeenCalled()
+    expect(profiles.getProfiles).not.toHaveBeenCalled()
   })
 
   it('does not sweep an owner-pinned read (sessionReadOwnerPin resolved a profile)', async () => {
@@ -206,12 +206,12 @@ describe('getSession cross-profile fallback (9200 unlisted-profile 404)', () => 
     await expect(getSession('remote-owned')).rejects.toThrow('404: Session not found')
 
     expect(hermesApi).toHaveBeenCalledTimes(1)
-    expect(profilesModule.getProfiles).not.toHaveBeenCalled()
+    expect(profiles.getProfiles).not.toHaveBeenCalled()
   })
 
   it('sweeps even when the ambient target is the named (non-default) profile', async () => {
     vi.mocked(client.getApiRequestProfile).mockReturnValue('beta')
-    vi.mocked(profilesModule.getProfiles).mockResolvedValue({ profiles: [{ name: 'beta' }, { name: 'tommy' }] } as unknown as ProfilesResponse)
+    vi.mocked(profiles.getProfiles).mockResolvedValue({ profiles: [{ name: 'beta' }, { name: 'tommy' }] } as unknown as ProfilesResponse)
     hermesApi.mockImplementation(async (request: { path: string }) => {
       if (request.path.includes('?profile=tommy')) {
         return sessionOn('tommy')
@@ -228,7 +228,7 @@ describe('getSession cross-profile fallback (9200 unlisted-profile 404)', () => 
   })
 
   it('rethrows the original 404 when every listed profile also misses', async () => {
-    vi.mocked(profilesModule.getProfiles).mockResolvedValue({ profiles: [{ name: 'default' }, { name: 'coder' }] } as unknown as ProfilesResponse)
+    vi.mocked(profiles.getProfiles).mockResolvedValue({ profiles: [{ name: 'default' }, { name: 'coder' }] } as unknown as ProfilesResponse)
     hermesApi.mockRejectedValue(notFound())
 
     await expect(getSession('missing')).rejects.toThrow('404: Session not found')
@@ -242,7 +242,7 @@ describe('getSession cross-profile fallback (9200 unlisted-profile 404)', () => 
     await expect(getSession('owner-session')).rejects.toThrow('503: Service Unavailable')
 
     expect(hermesApi).toHaveBeenCalledTimes(1)
-    expect(profilesModule.getProfiles).not.toHaveBeenCalled()
+    expect(profiles.getProfiles).not.toHaveBeenCalled()
   })
 })
 
@@ -477,6 +477,7 @@ describe('searchSessions profile scope', () => {
     })
   })
 })
+
 describe('fetchStoredTranscriptAcrossBackends profile sweep (9200 unlisted-profile 404)', () => {
   const remoteBackend = { connections: [{ id: 'remote-b' }] }
   const transcript = (profileName: string) => ({ id: 'owner-session', messages: [], profile: profileName })
@@ -484,7 +485,7 @@ describe('fetchStoredTranscriptAcrossBackends profile sweep (9200 unlisted-profi
   it('sweeps every profile on a remote backend when the row is on a non-default profile', async () => {
     // Ambient read misses; the row lives on the remote backend's `coder` DB.
     vi.mocked(connectionRegistry.$connectionsRegistry.get).mockReturnValue({ connections: remoteBackend.connections } as never)
-    vi.mocked(profilesModule.getProfiles).mockImplementation(async (scope: unknown) => {
+    vi.mocked(profiles.getProfiles).mockImplementation(async (scope: unknown) => {
       const inventory = scope && typeof scope === 'object' && 'connectionId' in (scope as object) ? { profiles: [{ name: 'default' }, { name: 'coder' }] } : { profiles: [{ name: 'default' }] }
 
       return inventory as unknown as ProfilesResponse
@@ -504,7 +505,7 @@ describe('fetchStoredTranscriptAcrossBackends profile sweep (9200 unlisted-profi
 
   it('falls back to the default profile list when the inventory read fails', async () => {
   vi.mocked(connectionRegistry.$connectionsRegistry.get).mockReturnValue({ connections: remoteBackend.connections } as never)
-  vi.mocked(profilesModule.getProfiles).mockRejectedValue(new Error('503: Service Unavailable'))
+  vi.mocked(profiles.getProfiles).mockRejectedValue(new Error('503: Service Unavailable'))
   // The inventory read fails → profileCandidatesFor falls back to
   // ['default']; the default-profile probe hits.
   hermesApi.mockImplementation(async (request: { path: string }) => {
@@ -522,11 +523,107 @@ describe('fetchStoredTranscriptAcrossBackends profile sweep (9200 unlisted-profi
 
   it('returns null when every profile on every backend also misses', async () => {
     vi.mocked(connectionRegistry.$connectionsRegistry.get).mockReturnValue({ connections: remoteBackend.connections } as never)
-    vi.mocked(profilesModule.getProfiles).mockResolvedValue({ profiles: [{ name: 'default' }, { name: 'coder' }] } as unknown as ProfilesResponse)
+    vi.mocked(profiles.getProfiles).mockResolvedValue({ profiles: [{ name: 'default' }, { name: 'coder' }] } as unknown as ProfilesResponse)
     hermesApi.mockRejectedValue(new Error('404: Session not found'))
 
     const resolved = await fetchStoredTranscriptAcrossBackends('missing')
 
     expect(resolved).toBeNull()
+  })
+})
+
+describe('session writes fall back to the owning profile on unpinned 404 (9200 unlisted-profile repro)', () => {
+  const notFound = () => new Error('404: Session not found')
+  const snapshot = { exists: true, runtime_revision: 5, runtime_generation: 2 }
+
+  // Route hermesApi calls: snapshot reads resolve, write calls answer per
+  // profile (the probe profile hits, everything else 404s).
+  const mockWriteRoutes = (hitProfile: string | null, success = { ok: true }) => {
+    vi.mocked(profiles.getProfiles).mockResolvedValue(
+      { profiles: [{ name: 'default' }, { name: 'coder' }] } as unknown as ProfilesResponse
+    )
+    hermesApi.mockImplementation(async (request: { path: string; profile?: string }) => {
+      if (request.path.includes('/mutation-snapshot')) {
+        return snapshot as never
+      }
+
+      if (hitProfile === null) {
+        throw notFound()
+      }
+
+      if (request.profile === hitProfile) {
+        return success as never
+      }
+
+      throw notFound()
+    })
+  }
+
+  it('an unpinned ambient DELETE that 404s re-issues the delete on the owning profile', async () => {
+    mockWriteRoutes('coder', { ok: true })
+
+    const result = await deleteSession('owner-session')
+
+    expect(result).toEqual({ ok: true })
+    const deletes = hermesApi.mock.calls.filter(([request]) => request.method === 'DELETE')
+    expect(deletes).toHaveLength(2)
+    expect(deletes[0][0]).not.toHaveProperty('profile')
+    expect(deletes[1][0]).toMatchObject({ profile: 'coder', path: expect.stringContaining('?profile=coder') })
+  })
+
+  it('an unpinned ambient PATCH that 404s re-issues the patch on the owning profile', async () => {
+    mockWriteRoutes('coder', { ok: true })
+
+    const result = await setSessionArchived('owner-session', true)
+
+    expect(result).toEqual({ ok: true })
+    const patches = hermesApi.mock.calls.filter(([request]) => request.method === 'PATCH')
+    expect(patches).toHaveLength(2)
+    expect(patches[1][0]).toMatchObject({
+      profile: 'coder',
+      path: '/api/sessions/owner-session',
+      body: { archived: true, profile: 'coder' }
+    })
+  })
+
+  it('a pinned caller-named profile that 404s propagates fail-closed (no sweep)', async () => {
+    vi.mocked(client.getApiRequestProfile).mockReturnValue(null)
+    hermesApi.mockRejectedValue(notFound())
+
+    await expect(deleteSession('owner-session', 'tommy')).rejects.toThrow('404: Session not found')
+
+    // Only the pinned attempt: no inventory read, no sweep.
+    expect(hermesApi).toHaveBeenCalledTimes(1)
+    expect(profiles.getProfiles).not.toHaveBeenCalled()
+  })
+
+  it('an ambient request profile that 404s propagates fail-closed (no sweep)', async () => {
+    vi.mocked(client.getApiRequestProfile).mockReturnValue('beta')
+    hermesApi.mockRejectedValue(notFound())
+
+    await expect(deleteSession('owner-session')).rejects.toThrow('404: Session not found')
+
+    expect(hermesApi).toHaveBeenCalledTimes(1)
+    expect(profiles.getProfiles).not.toHaveBeenCalled()
+  })
+
+  it('a sweep-wide write miss rethrows the original 404', async () => {
+    mockWriteRoutes(null)
+
+    await expect(deleteSession('missing')).rejects.toThrow('404: Session not found')
+
+    // ambient miss + coder miss (default is excluded as the ambient target)
+    const deletes = hermesApi.mock.calls.filter(([request]) => request.method === 'DELETE')
+    expect(deletes).toHaveLength(2)
+  })
+
+  it('a non-404 write failure propagates untouched (no sweep)', async () => {
+    vi.mocked(client.getApiRequestProfile).mockReturnValue(null)
+    hermesApi.mockRejectedValue(new Error('503: Service Unavailable'))
+
+    await expect(renameSession('owner-session', 'New title')).rejects.toThrow('503: Service Unavailable')
+
+    expect(hermesApi).toHaveBeenCalledTimes(1)
+    expect(profiles.getProfiles).not.toHaveBeenCalled()
   })
 })

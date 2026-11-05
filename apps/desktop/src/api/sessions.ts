@@ -48,10 +48,11 @@ function isSessionNotFoundError(error: unknown): boolean {
  *  settled misses keep running so a later caller's verdict still sees every
  *  outcome. A sweep-wide miss rethrows the ORIGINAL primary error — nothing
  *  was lost that the caller could not already see. */
-async function withCrossProfileFallback<T extends { profile?: string }>(
+async function withCrossProfileFallback<T>(
   candidates: string[],
   probe: (profile: string) => Promise<T>,
-  primaryError: unknown
+  primaryError: unknown,
+  stamp?: (hit: T, profile: string) => void
 ): Promise<T> {
   const outcomes = await Promise.all(
     candidates.map(async profile => {
@@ -65,7 +66,7 @@ async function withCrossProfileFallback<T extends { profile?: string }>(
 
   for (const { hit, profile } of outcomes) {
     if (hit !== undefined) {
-      hit.profile = profile
+      stamp?.(hit, profile)
 
       return hit
     }
@@ -451,24 +452,59 @@ function mutateSessionHttp<T>(id: string, method: 'PATCH' | 'DELETE', payload: R
   // the registry's 'local' source would pin a remote primary's edits to this machine.
   const scope = { connectionId: getApiRequestConnection(), ...sessionScoped(profile) }
   const path = `/api/sessions/${encodeURIComponent(id)}`
-  const query = new URLSearchParams(scope.profile ? { profile: scope.profile } : {})
-  const suffix = query.size ? `?${query}` : ''
-  const key = JSON.stringify([scope, id, method, payload])
 
-  const send = (identity: Partial<SessionMutationIdentity>) => {
-    if (method === 'DELETE') {
-      const params = new URLSearchParams(query)
+  const resolveScope = (probeProfile: ProfileScope) =>
+    probeProfile === profile
+      ? scope
+      : { connectionId: getApiRequestConnection(), ...sessionScoped(probeProfile) }
 
-      for (const [name, value] of Object.entries(identity)) { params.set(name, String(value)) }
+  const attempt = (probeProfile: ProfileScope): Promise<T> => {
+    const target = resolveScope(probeProfile)
+    const query = new URLSearchParams(target.profile ? { profile: target.profile } : {})
+    const suffix = query.size ? `?${query}` : ''
+    const key = JSON.stringify([target, id, method, payload])
 
-      return hermesApi<T>({ ...scope, path: params.size ? `${path}?${params}` : path, method })
+    const send = (identity: Partial<SessionMutationIdentity>) => {
+      if (method === 'DELETE') {
+        const params = new URLSearchParams(query)
+
+        for (const [name, value] of Object.entries(identity)) { params.set(name, String(value)) }
+
+        return hermesApi<T>({ ...target, path: params.size ? `${path}?${params}` : path, method })
+      }
+
+      return hermesApi<T>({ ...target, path, method,
+        body: { ...payload, ...identity, ...(target.profile ? { profile: target.profile } : {}) } })
     }
 
-    return hermesApi<T>({ ...scope, path, method,
-      body: { ...payload, ...identity, ...(scope.profile ? { profile: scope.profile } : {}) } })
+    return mutateSessionFenced(key, () => hermesApi<SessionMutationSnapshot>({ ...target, path: `${path}/mutation-snapshot${suffix}` }), send)
   }
 
-  return mutateSessionFenced(key, () => hermesApi<SessionMutationSnapshot>({ ...scope, path: `${path}/mutation-snapshot${suffix}` }), send)
+  // An explicitly pinned write (a caller-named profile, or an ambient request
+  // profile) is fail-closed: that profile was chosen on purpose, and a 404
+  // means the row is not there. Only an UNPINNED ambient write falls back to
+  // the owning profile (the row may live on another profile's state.db — the
+  // 9200 `profiles/coder` repro), mirroring P2's getSession contract.
+  if (scope.profile || getApiRequestProfile()) {
+    return attempt(profile)
+  }
+
+  return attempt(profile).catch(async (error: unknown) => {
+    if (!isSessionNotFoundError(error)) {
+      throw error
+    }
+
+    const inventory = await getProfiles().catch(() => ({ profiles: [] as ProfileInfo[] }))
+    const candidates = inventory.profiles
+      .map(({ name }) => name)
+      .filter((name): name is string => Boolean(name) && name !== (getApiRequestProfile() ?? 'default'))
+
+    return withCrossProfileFallback(
+      candidates,
+      profileName => attempt({ profile: profileName } as ProfileScope),
+      error
+    )
+  })
 }
 
 export function setSessionArchived(id: string, archived: boolean, profile?: string | null): Promise<{ ok: boolean }> {
@@ -547,7 +583,10 @@ export function getSession(id: string, profile?: ProfileScope, options: { passiv
     return withCrossProfileFallback(
       candidates,
       profileName => issue({ profile: profileName } as ProfileScope),
-      error
+      error,
+      (row, profileName) => {
+        row.profile = profileName
+      }
     )
   })
 }
