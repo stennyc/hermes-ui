@@ -43,7 +43,8 @@ import {
 vi.mock('@/hermes', async importOriginal => ({
   ...(await importOriginal()),
   getLatestSessionMessages: vi.fn(),
-  getOlderSessionMessages: vi.fn()
+  getOlderSessionMessages: vi.fn(),
+  getSession: vi.fn()
 }))
 
 vi.mock('@/store/projects', async importOriginal => ({
@@ -52,7 +53,7 @@ vi.mock('@/store/projects', async importOriginal => ({
   refreshProjects: vi.fn(async () => undefined)
 }))
 
-const { getLatestSessionMessages, getOlderSessionMessages } = await import('@/hermes')
+const { getLatestSessionMessages, getOlderSessionMessages, getSession } = await import('@/hermes')
 const { refreshProjectTree, refreshProjects } = await import('@/store/projects')
 
 const ACTIVE_RUNTIME_ID = 'runtime-active'
@@ -207,7 +208,9 @@ describe('resolveActiveTranscriptSession', () => {
     const fixture = makeRefresh(resolveActiveTranscriptSession)
     await fixture.refresh()
 
-    expect(getLatestSessionMessages).toHaveBeenCalledWith(ACTIVE_STORED_ID, scope)
+    // P4: the read goes through the owner-fallback wrapper, which re-issues
+    // with the explicit `{ passive: false }` options object.
+    expect(getLatestSessionMessages).toHaveBeenCalledWith(ACTIVE_STORED_ID, scope, {})
     expect(fixture.states.get(ACTIVE_RUNTIME_ID)?.messages.at(-1)?.parts[0]).toMatchObject({
       text: 'hint-owned answer'
     })
@@ -229,6 +232,68 @@ describe('resolveActiveTranscriptSession', () => {
     $sessionTiles.set([{ storedSessionId: 'shared', runtimeId: 'active-runtime' }])
 
     expect(resolveActiveTranscriptSession('shared', 'active-runtime')).toEqual({ profile: 'default' })
+  })
+})
+
+
+describe('unlisted-profile 404: transcript read falls back to the owning profile', () => {
+  const notFound = () => new Error('404: Session not found')
+  const ownerSession = (profileName: string) => ({ id: ACTIVE_STORED_ID, profile: profileName } as never)
+
+  beforeEach(() => {
+    vi.mocked(getSession).mockReset()
+    vi.mocked(getLatestSessionMessages).mockReset()
+  })
+
+  it('an unpinned ambient read that 404s resolves the owner and re-reads pinned', async () => {
+    // 9200 `profiles/coder` repro: the ambient read lands on the shared
+    // backend's default state.db (row not there); the row lives on `coder`.
+    vi.mocked(getLatestSessionMessages)
+      .mockRejectedValueOnce(notFound())
+      .mockResolvedValueOnce(transcript('owner answer') as never)
+    vi.mocked(getSession).mockResolvedValue(ownerSession('coder'))
+
+    const fixture = makeRefresh(() => ({ profile: undefined }) as never)
+    fixture.state.messages = []
+    publishSessionState(ACTIVE_RUNTIME_ID, fixture.state)
+
+    await fixture.refresh()
+
+    expect(getSession).toHaveBeenCalledWith(ACTIVE_STORED_ID, undefined, { passive: undefined })
+    expect(getLatestSessionMessages).toHaveBeenLastCalledWith(ACTIVE_STORED_ID, 'coder', {})
+    expect(fixture.updateSessionState).toHaveBeenCalledTimes(1)
+  })
+
+  it('a pinned ownerRoute-built scope that 404s propagates without an owner lookup', async () => {
+    vi.mocked(getLatestSessionMessages).mockRejectedValue(notFound())
+    vi.mocked(getSession).mockResolvedValue(ownerSession('coder'))
+
+    const fixture = makeRefresh(() => ({ profile: 'beta' }) as never)
+    fixture.state.messages = []
+    publishSessionState(ACTIVE_RUNTIME_ID, fixture.state)
+
+    await fixture.refresh().catch(() => {})
+
+    // fail-closed: the deliberately pinned scope is not re-resolved.
+    expect(getSession).not.toHaveBeenCalled()
+    expect(getLatestSessionMessages).toHaveBeenCalledTimes(1)
+  })
+
+  it('a sweep-wide owner miss rethrows the original transcript 404', async () => {
+    vi.mocked(getLatestSessionMessages).mockRejectedValue(notFound())
+    vi.mocked(getSession).mockRejectedValue(notFound())
+
+    const fixture = makeRefresh(() => ({ profile: undefined }) as never)
+    fixture.state.messages = []
+    publishSessionState(ACTIVE_RUNTIME_ID, fixture.state)
+
+    await fixture.refresh().catch(() => {})
+
+    // getSession WAS consulted (unpinned read) but found nothing on any
+    // profile: the original 404 propagates, no re-issue.
+    expect(getSession).toHaveBeenCalledTimes(1)
+    expect(getLatestSessionMessages).toHaveBeenCalledTimes(1)
+    expect(fixture.updateSessionState).not.toHaveBeenCalled()
   })
 })
 
@@ -265,7 +330,7 @@ describe('active transcript refresh', () => {
       expect(getLatestSessionMessages).toHaveBeenCalledWith(hiddenStoredSessionId, {
         connectionId: ownerRoute.connectionId,
         profile: ownerRoute.targetProfile
-      })
+      }, {})
     )
     expect(fixture.states.get(ACTIVE_RUNTIME_ID)?.messages.at(-1)?.parts[0]).toMatchObject({
       text: 'hidden external answer'
@@ -664,7 +729,7 @@ describe('active transcript refresh', () => {
         text: 'external answer'
       })
     )
-    expect(getLatestSessionMessages).toHaveBeenCalledWith(ACTIVE_STORED_ID, 'desktop-profile')
+    expect(getLatestSessionMessages).toHaveBeenCalledWith(ACTIVE_STORED_ID, 'desktop-profile', {})
   })
 
   it('does not add a periodic transcript poll to local/Desktop sessions', async () => {
@@ -1005,7 +1070,7 @@ describe('reconcileActiveTranscript', () => {
 
     await fixture.refresh()
 
-    expect(getLatestSessionMessages).toHaveBeenCalledWith(ACTIVE_STORED_ID, 'messaging-profile')
+    expect(getLatestSessionMessages).toHaveBeenCalledWith(ACTIVE_STORED_ID, 'messaging-profile', {})
     expect(fixture.states.get(ACTIVE_RUNTIME_ID)?.messages.at(-1)?.parts[0]).toMatchObject({
       text: 'telegram answer'
     })
@@ -1018,7 +1083,7 @@ describe('reconcileActiveTranscript', () => {
 
     await fixture.refresh()
 
-    expect(getLatestSessionMessages).toHaveBeenCalledWith(ACTIVE_STORED_ID, 'cron-profile')
+    expect(getLatestSessionMessages).toHaveBeenCalledWith(ACTIVE_STORED_ID, 'cron-profile', {})
     expect(fixture.states.get(ACTIVE_RUNTIME_ID)?.messages.at(-1)?.parts[0]).toMatchObject({
       text: 'cron progress'
     })
@@ -1068,9 +1133,9 @@ describe('reconcileActiveTranscript', () => {
 
     await fixture.refresh()
 
-    expect(getLatestSessionMessages).toHaveBeenCalledWith(S, expect.objectContaining({ profile: 'omar' }))
+    expect(getLatestSessionMessages).toHaveBeenCalledWith(S, expect.objectContaining({ profile: 'omar' }), {})
     expect(getLatestSessionMessages).not.toHaveBeenCalledWith(S, 'default')
-    expect(getLatestSessionMessages).not.toHaveBeenCalledWith(S, expect.objectContaining({ profile: 'default' }))
+    expect(getLatestSessionMessages).not.toHaveBeenCalledWith(S, expect.objectContaining({ profile: 'default' }), {})
   })
 
   it('uses the presentation profile when a hidden owner has no target profile', async () => {
@@ -1088,7 +1153,7 @@ describe('reconcileActiveTranscript', () => {
     expect(getLatestSessionMessages).toHaveBeenCalledWith(hiddenStoredSessionId, {
       connectionId: 'owner-no-target',
       profile: 'presentation-profile'
-    })
+    }, {})
   })
 
   it('reads and publishes only the active hidden owner when another owner coexists', async () => {
@@ -1120,7 +1185,7 @@ describe('reconcileActiveTranscript', () => {
     expect(getLatestSessionMessages).toHaveBeenCalledWith(ownerBStoredSessionId, {
       connectionId: ownerBRoute.connectionId,
       profile: ownerBRoute.targetProfile
-    })
+    }, {})
     expect(fixture.updateSessionState).toHaveBeenCalledWith(
       ACTIVE_RUNTIME_ID,
       expect.any(Function),

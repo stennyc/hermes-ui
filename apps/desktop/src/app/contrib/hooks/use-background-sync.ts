@@ -8,7 +8,7 @@ import {
 } from '@/app/chat/transcript-backfill'
 import { sessionCreatedThisRun } from '@/app/session/hooks/use-session-actions/created-this-run'
 import { preserveLocalPendingTurnMessages } from '@/app/session/hooks/use-session-actions/utils'
-import { getLatestSessionMessages, type ProfileScope } from '@/hermes'
+import { getLatestSessionMessages, getSession, type ProfileScope } from '@/hermes'
 import {
   type ChatMessage,
   preserveLocalAssistantErrors,
@@ -79,6 +79,47 @@ export function profileScopeForTranscriptSession(stored: ActiveTranscriptSession
   }
 
   return stored.profile
+}
+
+/**
+ * Owner-resolved transcript read (the 9200 `profiles/coder` repro, P4).
+ * An UNPINNED ambient read that 404s with the handler's "Session not found"
+ * verdict first resolves the row's owning profile via getSession's
+ * cross-profile fallback (P2), then re-issues the transcript read pinned to
+ * that owner. Pinned reads (a caller-named profile, incl. an ownerRoute-built
+ * `{connectionId, profile}` scope) and non-404 failures propagate untouched:
+ * a deliberately chosen scope that misses is a miss, and a network failure is
+ * not a 404.
+ */
+async function readTranscriptWithOwnerFallback(
+  id: string,
+  scope: ProfileScope,
+  options: { passive?: boolean } = {}
+): Promise<ReturnType<typeof getLatestSessionMessages>> {
+  try {
+    return await getLatestSessionMessages(id, scope, options)
+  } catch (error: unknown) {
+    const pinned =
+      (typeof scope === 'string' && scope.length > 0) ||
+      (typeof scope === 'object' && scope !== null && Boolean(scope.profile))
+    const message = error instanceof Error ? error.message : String(error ?? '')
+    const sessionNotFound = /\b404\b/.test(message) && /session not found/i.test(message)
+
+    if (pinned || !sessionNotFound) {
+      throw error
+    }
+
+    // UNPINNED ambient 404: resolve the row's owning profile. A full
+    // sweep-wide miss rethrows the ORIGINAL error (getSession's contract),
+    // which the catch below swallows into the rethrown transcript 404.
+    const row = await getSession(id, undefined, { passive: options.passive }).catch(() => null)
+
+    if (row?.profile) {
+      return getLatestSessionMessages(id, row.profile, options)
+    }
+
+    throw error
+  }
 }
 
 /** Dedupe key for one active transcript's last published page signature. */
@@ -315,7 +356,7 @@ export async function reconcileTileTranscripts({
 
       // Passive: a hidden tile's refresh must never cold-start its owner
       // backend or hold a pool slot (#103375); no warm backend = retry next tick.
-      const latest = await getLatestSessionMessages(storedSessionId, profileScope, { passive: true })
+      const latest = await readTranscriptWithOwnerFallback(storedSessionId, profileScope, { passive: true })
       const replayAtReturn = pendingSessionReplay(runtimeSessionId)
 
       if (replayAtReturn && !(await replayAtReturn)) {
@@ -444,7 +485,7 @@ export async function hydrateStoredSessionTranscript({
     }
 
     try {
-      const latest = await getLatestSessionMessages(storedSessionId, storedProfile)
+      const latest = await readTranscriptWithOwnerFallback(storedSessionId, storedProfile)
       const replayAtReturn = pendingSessionReplay(runtimeSessionId)
 
       if (replayAtReturn && !(await replayAtReturn)) {
@@ -594,7 +635,7 @@ export async function reconcileActiveTranscript({
   try {
     const profileScope: ProfileScope = profileScopeForTranscriptSession(stored)
 
-    const latest = await getLatestSessionMessages(storedSessionId, profileScope)
+    const latest = await readTranscriptWithOwnerFallback(storedSessionId, profileScope)
     const replayAtReturn = pendingSessionReplay(runtimeSessionId)
 
     if (replayAtReturn && !(await replayAtReturn)) {
