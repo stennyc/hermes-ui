@@ -19,21 +19,12 @@ beforeAll(() => {
   Element.prototype.setPointerCapture ??= () => undefined
   Element.prototype.releasePointerCapture ??= () => undefined
   HTMLElement.prototype.scrollIntoView ??= () => undefined
-  // Pin the coordinator to DESKTOP behavior: isWebPlatform() probes for
-  // `terminal` (the web bridge omits it) and would flip L573/L612 into the
-  // web shell fallback. The statusbar Radix menu test only holds on desktop,
-  // where Radix content can mount.
-  Object.defineProperty(window, 'hermesDesktop', {
-    configurable: true,
-    value: { terminal: {}, writeClipboard: () => Promise.resolve() }
-  })
 })
 
 afterEach(() => {
   cleanup()
   $contextMenu.set(null)
   $statusbarHiddenIds.set([...STATUSBAR_HIDDEN_BY_DEFAULT])
-  Reflect.deleteProperty(window, 'hermesDesktop')
 })
 
 // End-to-end companion to the ContextMenuTrigger unit test: that one proves

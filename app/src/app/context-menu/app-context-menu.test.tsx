@@ -25,11 +25,6 @@ function installBridge(partial: Partial<Window['hermesDesktop']> = {}) {
   desktopWindow.hermesDesktop = {
     openExternal: vi.fn().mockResolvedValue(undefined),
     writeClipboard: vi.fn().mockResolvedValue(undefined),
-    // Pin the test to the DESKTOP bridge shape: isWebPlatform() probes for
-    // `terminal` and returns true when it is absent (the web bridge omits it).
-    // Every coordinator test exercises desktop ownership (Radix menus mount
-    // fine there); a web-shaped bridge would flip L573/L612 into web fallback.
-    terminal: {} as Window['hermesDesktop']['terminal'],
     ...partial
   } as unknown as Window['hermesDesktop']
 }
@@ -423,23 +418,6 @@ describe('AppContextMenu', () => {
     fireEvent.contextMenu(host.querySelector('span')!)
 
     expect($contextMenu.get()).toBeNull()
-  })
-
-  it('on the web build, trigger surfaces fall through to the shell fallback (Radix cannot mount)', () => {
-    // Web-shaped bridge: no `terminal` member → isWebPlatform() is true.
-    // The statusbar and every other Radix trigger surface must NOT swallow
-    // the gesture; the coordinator serves the shell fallback instead.
-    desktopWindow.hermesDesktop = {
-      openExternal: vi.fn().mockResolvedValue(undefined),
-      writeClipboard: vi.fn().mockResolvedValue(undefined)
-    } as Window['hermesDesktop']
-    mountMenu()
-    const host = attach('<div data-slot="context-menu-trigger"><span>statusbar</span></div>')
-
-    fireEvent.contextMenu(host.querySelector('span')!)
-
-    expect($contextMenu.get()).not.toBeNull()
-    expect($contextMenu.get()!.kind).toBe('dom')
   })
 
   it('shows the terminal menu through a registered handle', async () => {

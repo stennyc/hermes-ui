@@ -566,11 +566,7 @@ export function AppContextMenu() {
 
       // Only the pane-body wrapper is a fallback menu. Explicit row, tab and
       // status-bar menus still own their whole gesture, even inside a pane.
-      // Exception: on the WEB build a non-zone-body trigger's Radix menu cannot
-      // mount (no main-process menu), so the coordinator takes the gesture and
-      // serves the shell fallback instead. Desktop keeps Radix ownership — its
-      // menus mount fine, so the exception never fires there.
-      if (trigger && !trigger.hasAttribute('data-zone-body') && !isWebPlatform()) {
+      if (trigger && !trigger.hasAttribute('data-zone-body')) {
         return
       }
 
@@ -609,10 +605,7 @@ export function AppContextMenu() {
       const owned = Boolean(target.linkUrl || target.onImage || target.editable || selected)
 
       // A selection elsewhere in the same pane must not take its bare menu.
-      // On the web build the coordinator takes every bare right-click — Radix
-      // menus cannot mount without a main process, so no trigger position may
-      // swallow the gesture here. Desktop keeps Radix ownership.
-      if (!owned && trigger && !isWebPlatform()) {
+      if (!owned && trigger) {
         return
       }
 
