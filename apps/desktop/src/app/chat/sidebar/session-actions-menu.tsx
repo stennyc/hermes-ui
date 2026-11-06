@@ -658,18 +658,17 @@ function useSessionActions({
         <p className="text-muted-foreground text-xs">{r.copyIdManualHint}</p>
         <div className="flex items-center gap-2">
           <Input
-            className="flex-1"
+            aria-label="Session ID"
+            className="flex-1 font-mono"
+            defaultValue={sessionId}
             onFocus={event => event.currentTarget.select()}
             readOnly
-            value={sessionId}
           />
           <Button
             onClick={async () => {
-              const input = document.querySelector<HTMLInputElement>('input[readonly]')
-              if (input) {
-                input.focus()
-                input.select()
-              }
+              const input = document.querySelector<HTMLInputElement>('input[aria-label="Session ID"]')
+              input?.focus()
+              input?.select()
               // Try the real write first (genuine selected-text path keeps
               // working in secure contexts); in the non-secure context the
               // user's own keyboard Ctrl+C from the now-focused+selected
