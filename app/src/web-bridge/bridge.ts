@@ -1058,27 +1058,21 @@ export function createWebBridge(): Window['hermesDesktop'] {
   // navigator.clipboard.writeText alike. `false` means the system clipboard
   // was NOT written — callers must surface that instead of claiming success.
   const writeClipboardToSystem = async (text: string) => {
-    // Prefer the native Clipboard API first: it only needs user activation
-    // (any click/keypress within ~5s), not document focus. copyTextWithSelection
-    // steals focus with a scratch textarea and can silently fail while the Radix
-    // focus trap from an open menu still holds focus — so it is the last resort,
-    // not the first attempt.
-    if (nativeClipboardWriteText) {
-      try {
-        await nativeClipboardWriteText(text)
-
-        return true
-      } catch {
-        // NotAllowedError (no user activation) or SecurityError (non-secure
-        // context) — fall through to the selection-based path.
-      }
-    }
-
     if (copyTextWithSelection(text)) {
       return true
     }
 
-    return false
+    if (!nativeClipboardWriteText) {
+      return false
+    }
+
+    try {
+      await nativeClipboardWriteText(text)
+
+      return true
+    } catch {
+      return false
+    }
   }
 
   // The custom context menu's edit verbs. Electron owns these in main

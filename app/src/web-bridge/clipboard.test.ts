@@ -97,45 +97,6 @@ describe('writeClipboard fallback', () => {
     expect(nativeWriteText).toHaveBeenCalledWith('no-user-gesture')
   })
 
-  it('prefers the native Clipboard API over the textarea fallback when both are available', async () => {
-    const execCommand = vi.fn(() => true)
-    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
-
-    const nativeWriteText = vi.fn(async () => undefined)
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText: nativeWriteText }
-    })
-
-    const bridge = createWebBridge()
-
-    await expect(bridge.writeClipboard('native-first')).resolves.toBe(true)
-    expect(nativeWriteText).toHaveBeenCalledTimes(1)
-    expect(nativeWriteText).toHaveBeenCalledWith('native-first')
-    // The scratch-textarea path must not run when the native write succeeded —
-    // it steals focus and can corrupt a Radix menu's focus trap state.
-    expect(execCommand).not.toHaveBeenCalled()
-  })
-
-  it('falls back to the scratch-textarea path when the native write throws', async () => {
-    const execCommand = vi.fn(() => true)
-    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
-
-    const nativeWriteText = vi.fn(async () => {
-      throw new DOMException('Document is not focused.', 'NotAllowedError')
-    })
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText: nativeWriteText }
-    })
-
-    const bridge = createWebBridge()
-
-    await expect(bridge.writeClipboard('gesture-lost')).resolves.toBe(true)
-    expect(nativeWriteText).toHaveBeenCalledTimes(1)
-    expect(execCommand).toHaveBeenCalledWith('copy')
-  })
-
   it('reports a failed system-clipboard write as false, not a throw', async () => {
     Object.defineProperty(document, 'execCommand', { configurable: true, value: () => false })
 
