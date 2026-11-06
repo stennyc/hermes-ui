@@ -63,7 +63,7 @@ afterEach(() => {
 })
 
 describe('__runDeadSessionPrunePass', () => {
-  it('unpins a pin whose session 404s on every profile', async () => {
+  it('unpins a pin whose session 404s on the current profile (P9: no cross-profile probe)', async () => {
     $sessions.set([row('unrelated')])
     $pinnedSessionIds.set(['dead-pin'])
     getSessionMock.mockRejectedValue(notFound())
@@ -71,30 +71,26 @@ describe('__runDeadSessionPrunePass', () => {
     await __runDeadSessionPrunePass()
 
     expect($pinnedSessionIds.get()).toEqual([])
-    // Active-scope probe first, then each other profile.
+    // P9: a single ambient by-id read on the current profile; 404 is dead and
+    // no other profile is ever probed.
+    expect(getSessionMock).toHaveBeenCalledTimes(1)
     expect(getSessionMock).toHaveBeenCalledWith('dead-pin', undefined)
-    expect(getSessionMock).toHaveBeenCalledWith('dead-pin', 'work')
   })
 
-  it('keeps a pin whose session lives on another profile, and caches it as alive', async () => {
+  it('prunes a pin whose session lives on another profile (P9: not kept alive cross-profile)', async () => {
     $sessions.set([row('unrelated')])
     $pinnedSessionIds.set(['other-pin'])
-    getSessionMock.mockImplementation(async (id, profileName) => {
-      if (profileName === 'work') {
-        return row(id, { profile: 'work' })
-      }
-
-      throw notFound()
-    })
+    // Ambient read 404s (the session lives on 'work', not the current profile).
+    // P9 never probes 'work' — a 404 on the current profile is a dead verdict.
+    getSessionMock.mockRejectedValue(notFound())
 
     await __runDeadSessionPrunePass()
 
-    expect($pinnedSessionIds.get()).toEqual(['other-pin'])
-
-    // Alive verdict is cached — a second pass must not re-probe.
-    getSessionMock.mockClear()
-    await __runDeadSessionPrunePass()
-    expect(getSessionMock).not.toHaveBeenCalled()
+    // The cross-profile session is not this profile's to keep: pruned, and no
+    // probe was ever sent to 'work'.
+    expect($pinnedSessionIds.get()).toEqual([])
+    expect(getSessionMock).toHaveBeenCalledWith('other-pin', undefined)
+    expect(getSessionMock).not.toHaveBeenCalledWith('other-pin', 'work')
   })
 
   it('defers on non-404 probe failures instead of dropping, and retries later', async () => {
@@ -157,7 +153,7 @@ describe('__runDeadSessionPrunePass', () => {
     expect($pinnedSessionIds.get()).toEqual(['covered', 'root-covered'])
   })
 
-  it('defers when the profile list is not loaded yet', async () => {
+  it('prunes even when the profile list is not loaded yet (P9: verdict is profile-independent)', async () => {
     $sessions.set([row('unrelated')])
     $profiles.set([])
     $pinnedSessionIds.set(['mystery-pin'])
@@ -165,8 +161,9 @@ describe('__runDeadSessionPrunePass', () => {
 
     await __runDeadSessionPrunePass()
 
-    // Can't rule out another profile we don't know about — keep the pin.
-    expect($pinnedSessionIds.get()).toEqual(['mystery-pin'])
+    // P9: liveness is judged on the current profile alone; an ambient 404 is a
+    // dead verdict whether or not the profile inventory has loaded.
+    expect($pinnedSessionIds.get()).toEqual([])
   })
 
   it('prunes on a genuinely empty backend (all sessions purged)', async () => {
@@ -190,15 +187,10 @@ describe('__runDeadSessionPrunePass', () => {
     try {
       $sessions.set([row('unrelated')])
       $pinnedSessionIds.set(['ttl-pin'])
-      getSessionMock.mockImplementation(async (id, profileName) => {
-        if (profileName === 'work') {
-          return row(id, { profile: 'work' })
-        }
+      // P9: ambient read resolves on the current profile -> alive verdict.
+      getSessionMock.mockResolvedValue(row('ttl-pin', { profile: 'default' }))
 
-        throw notFound()
-      })
-
-      // Alive on another profile — cached, not pruned, not re-probed.
+      // Alive on the current profile — cached, not pruned, not re-probed.
       await __runDeadSessionPrunePass()
       expect($pinnedSessionIds.get()).toEqual(['ttl-pin'])
       getSessionMock.mockClear()
@@ -206,7 +198,7 @@ describe('__runDeadSessionPrunePass', () => {
       expect(getSessionMock).not.toHaveBeenCalled()
 
       // Session deleted mid-session; after the TTL the next pass re-probes
-      // and a definitive all-profile 404 prunes.
+      // and a definitive 404 on the current profile prunes.
       vi.setSystemTime(Date.now() + 10 * 60_000 + 1_000)
       getSessionMock.mockRejectedValue(notFound())
       await __runDeadSessionPrunePass()
