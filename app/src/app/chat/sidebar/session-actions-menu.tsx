@@ -568,6 +568,7 @@ function useSessionActions({
             setCopyFallbackOpen(true)
           }
         }}
+        silentError
         text={sessionId}
       />
       <kit.Separator />

@@ -1009,20 +1009,57 @@ export function copyTextWithSelection(text: string): boolean {
     }
   }
 
+  // Scratch textarea is VISIBLE during the copy gesture: Chromium requires
+  // the selection to be a genuine, user-visible text selection for
+  // execCommand('copy') to reach the system clipboard. A Range installed on
+  // an opacity-0 textarea reports success but the write is silently dropped
+  // — that is why the session menu's Copy ID kept failing while ordinary
+  // transcript copies (real selection + native right-click path) worked.
+  //
+  // The copy gesture runs SYNCHRONOUSLY (execCommand must fire inside the
+  // menu click's user-activation window — any await or rAF drops it, and a
+  // visible textarea lingers on screen for several seconds). Hiding and
+  // removing the textarea are therefore deferred to a microtask: by then
+  // execCommand has already committed the write, and the deferral is too
+  // fast to perceive (a few frames at most; a microtask flushes before the
+  // next frame). The selection it borrowed is restored synchronously in the
+  // same microtask — a cleared selection is how a prior revision broke
+  // transcript copy, and the restore must not race focus re-dispatch.
   const textarea = document.createElement('textarea')
   textarea.dataset.hermesClipboardFallback = ''
   textarea.value = text
   textarea.setAttribute('aria-hidden', 'true')
-  textarea.style.cssText = 'position:fixed;opacity:0;pointer-events:none'
+  textarea.style.cssText = 'position:fixed;top:4px;left:4px;width:8px;height:8px;padding:0;margin:0;opacity:0.99;overflow:hidden;border:0;z-index:2147483646;font-size:0.75rem'
   document.body.append(textarea)
 
-  try {
-    textarea.select()
+  let copied = false
 
-    return document.execCommand('copy')
+  try {
+    textarea.focus()
+    textarea.select()
+    copied = document.execCommand('copy')
+
+    // Classic select() wants the textarea to hold document focus. While a
+    // Radix menu (Copy ID fires from an open session menu) is up, its
+    // focus trap steals focus back and select() can leave the selection
+    // empty. A Range over the textarea's contents + addRange is a pure
+    // selection operation — no focus involved. Try that when the first
+    // attempt reports failure.
+    if (!copied) {
+      const range = document.createRange()
+      range.selectNodeContents(textarea)
+
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+
+      copied = document.execCommand('copy')
+    }
   } catch {
-    return false
-  } finally {
+    copied = false
+  }
+
+  void Promise.resolve().then(() => {
+    textarea.style.cssText = 'position:fixed;opacity:0;pointer-events:none'
     textarea.remove()
 
     if (selection) {
@@ -1040,7 +1077,9 @@ export function copyTextWithSelection(text: string): boolean {
     if (previousActive instanceof HTMLElement && previousActive.isConnected) {
       previousActive.focus({ preventScroll: true })
     }
-  }
+  })
+
+  return copied
 }
 
 export function createWebBridge(): Window['hermesDesktop'] {

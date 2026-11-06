@@ -20,7 +20,14 @@ export async function writeClipboardText(text: string) {
   }
 
   if (window.hermesDesktop?.writeClipboard) {
-    await window.hermesDesktop.writeClipboard(text)
+    const ok = await window.hermesDesktop.writeClipboard(text)
+
+    // The web bridge reports a failed system-clipboard write as `false`
+    // instead of throwing — surface it so the button doesn't claim success
+    // when the OS clipboard never changed.
+    if (ok === false) {
+      throw new Error('Clipboard write failed')
+    }
 
     return
   }
@@ -41,6 +48,14 @@ export interface CopyButtonProps {
   children?: React.ReactNode
   className?: string
   disabled?: boolean
+  /**
+   * When true, copy failure is reported through `onCopyError` without a
+   * status flip: a button that claims "copied" while the system clipboard
+   * never changed is a lie. The success flip still runs (a successful copy
+   * is always reported), and callers that surface their own failure affordance
+   * (a toast, a fallback input) opt in to this.
+   */
+  silentError?: boolean
   errorMessage?: string
   haptic?: boolean
   iconClassName?: string
@@ -69,6 +84,7 @@ export function CopyButton({
   onCopied,
   onCopyError,
   preventDefault = false,
+  silentError = false,
   showLabel,
   side,
   stopPropagation = false,
@@ -125,6 +141,12 @@ export function CopyButton({
       } catch (error) {
         onCopyError?.(error)
 
+        if (silentError) {
+          // The caller owns the failure affordance; keep the button's own
+          // label (don't flip to a red ✗ it would be repeating).
+          return
+        }
+
         if (resetRef.current !== null) {
           window.clearTimeout(resetRef.current)
         }
@@ -136,7 +158,7 @@ export function CopyButton({
         }, COPIED_RESET_MS)
       }
     },
-    [haptic, onCopied, onCopyError, preventDefault, stopPropagation, text]
+    [haptic, onCopied, onCopyError, preventDefault, silentError, stopPropagation, text]
   )
 
   const Icon = status === 'copied' ? Check : status === 'error' ? X : Copy
