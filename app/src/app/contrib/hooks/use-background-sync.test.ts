@@ -6,6 +6,7 @@ import { type ChatMessage, toChatMessages } from '@/lib/chat-messages'
 import { createClientSessionState } from '@/lib/chat-runtime'
 import { sessionListFingerprint, sessionMessagesSignature } from '@/lib/session-signatures'
 import { $changeEventsAvailable, notifyProjectsChanged, notifySessionsChanged, resetLiveSync } from '@/store/live-sync'
+import { resetTranscriptGone } from '@/store/transcript-gone'
 import {
   $activeSessionId,
   $selectedStoredSessionId,
@@ -189,6 +190,7 @@ afterEach(() => {
   $sessionTiles.set([])
   _resetSessionOwnerHintsForTests()
   resetTypingActivityTracking()
+  resetTranscriptGone()
 })
 
 describe('resolveActiveTranscriptSession', () => {

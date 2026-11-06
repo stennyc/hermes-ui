@@ -1,6 +1,7 @@
 import { isMissingRestEndpoint, isUnroutedRestPath } from '@/lib/gateway-rpc'
 import { stampRowsWithOwningConnection } from '@/lib/session-owner-stamp'
 import { recordSessionOwners } from '@/store/session-owner-index'
+import { recordTranscriptAlive } from '@/store/transcript-gone'
 import { pageHonorsLatestOrder, recordTranscriptTail } from '@/store/transcript-tail'
 import type {
   PaginatedSessions,
@@ -159,6 +160,9 @@ export async function listAllProfileSessions(
   const stamped = stampActiveConnectionOwner(result.sessions)
 
   recordSessionOwners(stamped)
+  // P12: a page that still lists an id retires its gone verdict (the
+  // session came back on some profile — re-reads resume on the next tick).
+  recordTranscriptAlive(stamped.map(row => row.id))
 
   return {
     ...result,
@@ -359,6 +363,7 @@ export async function listSidebarSessions(req: SidebarSessionsRequest): Promise<
   // P10: the sidebar batch is the index's main feeder — one unified page per
   // refresh already carries every row's owning profile tag.
   recordSessionOwners([...recentsStamped, ...cronStamped, ...messagingStamped])
+  recordTranscriptAlive([...recentsStamped, ...cronStamped, ...messagingStamped].map(row => row.id))
 
   return {
     recents: {

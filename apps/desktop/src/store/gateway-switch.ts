@@ -33,6 +33,7 @@ import {
 import { clearAllSessionControl } from '@/store/session-control'
 import { resetSessionOwnerIndex } from '@/store/session-owner-index'
 import { resetSessionPinMirror } from '@/store/session-pin-sync'
+import { resetTranscriptGone } from '@/store/transcript-gone'
 import { clearAllSessionStates } from '@/store/session-states'
 import { clearAllSessionTodos } from '@/store/todos'
 import { clearTranscriptTailPaging } from '@/store/transcript-tail'
@@ -204,6 +205,9 @@ export function wipeSessionListsForGatewaySwitch(): void {
   // its "confirmed absent" stamps would wrongly gate the new backend's
   // backfills for 30 s. Wipe it with the other per-backend caches.
   resetSessionOwnerIndex()
+  // Same per-backend rule for the P12 gone set: a "404 on the old
+  // backend's profile" verdict must not skip the re-reads on the new one.
+  resetTranscriptGone()
   // Project ids belong to the outgoing backend's projects.db; a scope left
   // entered would root the next draft's cwd in the old source's project.
   exitProjectScope()

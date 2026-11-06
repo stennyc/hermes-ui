@@ -50,6 +50,7 @@ import {
   $stalledSessionIds
 } from '@/store/session-states'
 import { loadArchivedSessions } from '@/store/sidebar-archive'
+import { isTranscriptGone, markTranscriptGone } from '@/store/transcript-gone'
 import {
   clearActiveSessionTodos,
   clearSessionTodos,
@@ -89,6 +90,16 @@ function readTranscriptWithOwnerFallback(
   options: { passive?: boolean } = {}
 ): ReturnType<typeof getLatestSessionMessages> {
   return getLatestSessionMessages(id, scope, options)
+}
+
+/**
+ * P12: the REST bridge's session-not-found verdict is a 404 whose message
+ * names the session ("404: Session not found" / "no such session"), unlike a
+ * route-missing 404. The re-reads only ever 404 on the session row itself,
+ * so this is the gone discriminator.
+ */
+function isTranscriptReadGone(error: unknown): boolean {
+  return /\b404\b.*not.?found/i.test(String((error as Error)?.message ?? error))
 }
 
 /** Dedupe key for one active transcript's last published page signature. */
@@ -412,7 +423,12 @@ export async function reconcileTileTranscripts({
         }),
         storedSessionId
       )
-    } catch {
+    } catch (error) {
+      // P12: a confirmed session-not-found retires the re-reads for this id
+      // (list page / gateway switch bring it back; see transcript-gone.ts).
+      if (isTranscriptReadGone(error)) {
+        markTranscriptGone(storedSessionId)
+      }
       // Non-fatal: the next change event retries.
     }
   }
@@ -526,7 +542,12 @@ export async function hydrateStoredSessionTranscript({
       }
 
       return
-    } catch {
+    } catch (error) {
+      // P12: a confirmed session-not-found retires the re-reads for this id
+      // (list page / gateway switch bring it back; see transcript-gone.ts).
+      if (isTranscriptReadGone(error)) {
+        markTranscriptGone(storedSessionId)
+      }
       // Best-effort fallback when live stream payloads are empty.
     }
   }
@@ -563,6 +584,14 @@ export async function reconcileActiveTranscript({
     tileRuntimeOwnsLiveState(runtimeSessionId) ||
     hostsOtherSession()
   ) {
+    return
+  }
+
+  // P12 (A, owner ruling 2026-11-06): a by-id transcript read that 404'd
+  // ("not on this profile right now") is recorded per-id and the re-reads
+  // skip it; a list page that still lists the id retires the verdict. No
+  // N-way re-read cascade on every sessions.changed tick.
+  if (isTranscriptGone(storedSessionId)) {
     return
   }
 
@@ -673,7 +702,14 @@ export async function reconcileActiveTranscript({
       }),
       storedSessionId
     )
-  } catch {
+  } catch (error) {
+    // P12: a session-not-found verdict retires the re-reads for this id until
+    // a list page lists it again (recordTranscriptAlive) or a gateway switch
+    // wipes the set. Anything else (network / RPC / backend down) stays
+    // retryable — only a 404 is a "gone" claim.
+    if (isTranscriptReadGone(error)) {
+      markTranscriptGone(storedSessionId)
+    }
     // Non-fatal: the next change event or manual resume can hydrate the view.
   }
 }
