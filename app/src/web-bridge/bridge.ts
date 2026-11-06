@@ -1016,15 +1016,35 @@ export function copyTextWithSelection(text: string): boolean {
   textarea.style.cssText = 'position:fixed;opacity:0;pointer-events:none'
   document.body.append(textarea)
 
-  try {
-    textarea.select()
+  let copied = false
 
-    return document.execCommand('copy')
+  try {
+    // A body-level textarea's .select() wants to FOCUS the element, which a
+    // Radix menu's focus trap (Copy ID fires from an open session menu)
+    // blocks, so it can leave the selection empty. A Range over the
+    // textarea's contents + addRange is a pure selection operation — no
+    // focus involved. Try that first, fall back to the classic select()
+    // shape when Range is unavailable.
+    const range = document.createRange()
+    range.selectNodeContents(textarea)
+
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+
+    copied = document.execCommand('copy')
+
+    if (!copied) {
+      textarea.select()
+      copied = document.execCommand('copy')
+    }
   } catch {
-    return false
+    copied = false
   } finally {
     textarea.remove()
 
+    // Restore the document selection EXACTLY as it was before we touched
+    // it — including "no selection" — so a user's standing selection (e.g.
+    // a transcript passage being copied) is never silently cleared.
     if (selection) {
       selection.removeAllRanges()
 
@@ -1041,6 +1061,8 @@ export function copyTextWithSelection(text: string): boolean {
       previousActive.focus({ preventScroll: true })
     }
   }
+
+  return copied
 }
 
 export function createWebBridge(): Window['hermesDesktop'] {

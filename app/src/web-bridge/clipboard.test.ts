@@ -9,12 +9,30 @@ describe('copyTextWithSelection', () => {
     document.body.replaceChildren()
   })
 
-  it('copies through a temporary selected textarea', () => {
+  it('copies through a Range selection on the scratch textarea (no focus)', () => {
+    // The Range + addRange path succeeds on the first execCommand call, so
+    // the select() fallback must NOT fire — exactly one execCommand call total.
     const execCommand = vi.fn(() => true)
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
 
     expect(copyTextWithSelection('HERMES-EXEC-COPY-9472')).toBe(true)
+    expect(execCommand).toHaveBeenCalledTimes(1)
     expect(execCommand).toHaveBeenCalledWith('copy')
+    expect(document.querySelector('textarea[data-hermes-clipboard-fallback]')).toBeNull()
+  })
+
+  it('falls back to select() when the Range path reports execCommand failure', () => {
+    // First call (Range-installed selection) fails, second call (select()-
+    // installed) succeeds — mirrors a host where addRange alone does not
+    // reach the platform clipboard manager.
+    const execCommand = vi.fn((cmd: string) => {
+      if (cmd !== 'copy') return false
+      return execCommand.mock.calls.length >= 2
+    })
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
+
+    expect(copyTextWithSelection('fallback-retry')).toBe(true)
+    expect(execCommand).toHaveBeenCalledTimes(2)
     expect(document.querySelector('textarea[data-hermes-clipboard-fallback]')).toBeNull()
   })
 
@@ -52,8 +70,11 @@ describe('copyTextWithSelection', () => {
     selection?.addRange(range)
 
     expect(copyTextWithSelection('borrowed')).toBe(true)
-    expect(document.activeElement).toBe(input)
+    // The scratch path must leave the user's standing selection intact — a
+    // cleared selection is how a prior revision broke transcript copy.
     expect(document.getSelection()?.toString()).toBe('select me')
+    // And the focus owner is restored, so keyboard flow resumes where it was.
+    expect(document.activeElement).toBe(input)
   })
 })
 
