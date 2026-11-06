@@ -18,6 +18,26 @@ describe('copyTextWithSelection', () => {
     expect(document.querySelector('textarea[data-hermes-clipboard-fallback]')).toBeNull()
   })
 
+  it('installs the selection via a Range, not a focusing select()', () => {
+    const execCommand = vi.fn(() => true)
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
+
+    // selectNodeContents on the scratch textarea + addRange: a pure selection
+    // operation with no focus side effect (HTMLTextAreaElement.select() would
+    // focus — blocked by an open Radix menu's focus trap, silently leaving the
+    // selection empty, so execCommand('copy') had nothing to copy).
+    const selection = window.getSelection()
+    if (!selection) {
+      throw new Error('jsdom must expose a document selection')
+    }
+    const addRange = vi.spyOn(selection, 'addRange')
+
+    expect(copyTextWithSelection('HERMES-EXEC-COPY-9472')).toBe(true)
+    expect(addRange).toHaveBeenCalledTimes(1)
+    expect(execCommand).toHaveBeenCalledWith('copy')
+    expect(document.querySelector('textarea[data-hermes-clipboard-fallback]')).toBeNull()
+  })
+
   it('reports an unavailable selection-copy command', () => {
     Object.defineProperty(document, 'execCommand', { configurable: true, value: () => false })
 
@@ -97,7 +117,7 @@ describe('writeClipboard fallback', () => {
     expect(nativeWriteText).toHaveBeenCalledWith('no-user-gesture')
   })
 
-  it('prefers the native Clipboard API over the textarea fallback when both are available', async () => {
+  it('writes through the system-clipboard path first (execCommand), then the web-clipboard fallback', async () => {
     const execCommand = vi.fn(() => true)
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
 
@@ -109,21 +129,19 @@ describe('writeClipboard fallback', () => {
 
     const bridge = createWebBridge()
 
-    await expect(bridge.writeClipboard('native-first')).resolves.toBe(true)
-    expect(nativeWriteText).toHaveBeenCalledTimes(1)
-    expect(nativeWriteText).toHaveBeenCalledWith('native-first')
-    // The scratch-textarea path must not run when the native write succeeded —
-    // it steals focus and can corrupt a Radix menu's focus trap state.
-    expect(execCommand).not.toHaveBeenCalled()
+    await expect(bridge.writeClipboard('system-first')).resolves.toBe(true)
+    // execCommand reaches the platform/system clipboard (what Ctrl+V reads);
+    // the native Clipboard API only fills a Chromium web clipboard, so it must
+    // not run when the selection path already succeeded.
+    expect(execCommand).toHaveBeenCalledTimes(1)
+    expect(execCommand).toHaveBeenCalledWith('copy')
+    expect(nativeWriteText).not.toHaveBeenCalled()
   })
 
-  it('falls back to the scratch-textarea path when the native write throws', async () => {
-    const execCommand = vi.fn(() => true)
-    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
+  it('falls back to the web-clipboard API when the selection path fails', async () => {
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: () => false })
 
-    const nativeWriteText = vi.fn(async () => {
-      throw new DOMException('Document is not focused.', 'NotAllowedError')
-    })
+    const nativeWriteText = vi.fn(async () => undefined)
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: { writeText: nativeWriteText }
@@ -131,9 +149,9 @@ describe('writeClipboard fallback', () => {
 
     const bridge = createWebBridge()
 
-    await expect(bridge.writeClipboard('gesture-lost')).resolves.toBe(true)
+    await expect(bridge.writeClipboard('web-clipboard')).resolves.toBe(true)
     expect(nativeWriteText).toHaveBeenCalledTimes(1)
-    expect(execCommand).toHaveBeenCalledWith('copy')
+    expect(nativeWriteText).toHaveBeenCalledWith('web-clipboard')
   })
 
   it('reports a failed system-clipboard write as false, not a throw', async () => {

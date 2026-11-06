@@ -1017,7 +1017,20 @@ export function copyTextWithSelection(text: string): boolean {
   document.body.append(textarea)
 
   try {
-    textarea.select()
+    // Select the scratch value without FOCUSING the textarea:
+    // HTMLTextAreaElement.select() tries to focus the element first, and when a
+    // Radix menu's focus trap is active (Copy ID fires from an open session
+    // menu), the trap blocks focus on a body-level node, so select() silently
+    // fails to install the selection and execCommand('copy') has nothing to
+    // copy. A fresh Range over the whole textarea content + addRange is a pure
+    // selection operation — no focus side effect, trap-proof. (setBaseAndExtent
+    // is the spec-pure alternative but jsdom can't set selection offsets on
+    // form elements, which would break the test suite.)
+    const range = document.createRange()
+    range.selectNodeContents(textarea)
+
+    selection?.removeAllRanges()
+    selection?.addRange(range)
 
     return document.execCommand('copy')
   } catch {
@@ -1058,27 +1071,27 @@ export function createWebBridge(): Window['hermesDesktop'] {
   // navigator.clipboard.writeText alike. `false` means the system clipboard
   // was NOT written — callers must surface that instead of claiming success.
   const writeClipboardToSystem = async (text: string) => {
-    // Prefer the native Clipboard API first: it only needs user activation
-    // (any click/keypress within ~5s), not document focus. copyTextWithSelection
-    // steals focus with a scratch textarea and can silently fail while the Radix
-    // focus trap from an open menu still holds focus — so it is the last resort,
-    // not the first attempt.
-    if (nativeClipboardWriteText) {
-      try {
-        await nativeClipboardWriteText(text)
-
-        return true
-      } catch {
-        // NotAllowedError (no user activation) or SecurityError (non-secure
-        // context) — fall through to the selection-based path.
-      }
-    }
-
+    // execCommand('copy') goes through the platform clipboard manager and is
+    // the only path that reliably reaches the SYSTEM clipboard in this host
+    // (a Chromium web clipboard is not the target the user pastes from). The
+    // native Clipboard API writes a Chromium-managed web clipboard, so it
+    // resolves successfully while Ctrl/Cmd+V elsewhere still shows the old
+    // contents — treat it as the fallback, not the primary path.
     if (copyTextWithSelection(text)) {
       return true
     }
 
-    return false
+    if (!nativeClipboardWriteText) {
+      return false
+    }
+
+    try {
+      await nativeClipboardWriteText(text)
+
+      return true
+    } catch {
+      return false
+    }
   }
 
   // The custom context menu's edit verbs. Electron owns these in main
