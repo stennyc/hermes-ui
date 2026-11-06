@@ -23,7 +23,8 @@ const TAB_HORIZONTAL = 'h-full min-w-0 max-w-48 not-first:border-l not-first:bor
 
 // A closeable tab's floor keeps short labels left of the close button.
 // A floor, not padding — a tab already wider than it pays nothing.
-const TAB_CLOSEABLE = 'min-w-13'
+// 64px: leaves breathing room between label and the 32px close hit area.
+const TAB_CLOSEABLE = 'min-w-16'
 
 const TAB_VERTICAL =
   'w-full max-h-48 justify-center not-first:border-t not-first:border-t-(--ui-stroke-quaternary) [writing-mode:vertical-rl]'
@@ -175,7 +176,7 @@ export const PaneTab = React.forwardRef<HTMLDivElement, PaneTabProps>(function P
         <span className="pointer-events-none absolute inset-y-0 right-0 flex items-stretch opacity-0 transition-opacity group-hover/tab:pointer-events-auto group-hover/tab:opacity-100">
           <button
             aria-label={translateNow('common.close')}
-            className="grid w-(--pane-tab-close-width) cursor-pointer place-items-center bg-transparent text-(--ui-text-tertiary) outline-none hover:text-foreground"
+            className="grid h-full w-(--pane-tab-close-width) cursor-pointer place-items-center rounded-md bg-transparent text-(--ui-text-tertiary) outline-none transition-colors hover:bg-accent/40 hover:text-foreground"
             onClick={event => {
               event.preventDefault()
               event.stopPropagation()
