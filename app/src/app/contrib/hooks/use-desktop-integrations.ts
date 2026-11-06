@@ -250,9 +250,18 @@ export function useDesktopIntegrations({
           // Unlisted (or a delegate row that reached a list slice): resolve
           // the id directly — the by-id endpoint serves delegate children the
           // list omits. A delegate child repairs to its parent, an orphan or
-          // foreign-profile id clears, and a fetch failure keeps the
-          // remembered value for the next launch instead of discarding it.
-          void resolveRememberedSessionId(last, id => getSession(id, activeProfile))
+          // foreign-profile id clears. An authoritative "no such session on
+          // this profile" (the bridge's 404 error, e.g. a remembered id owned
+          // by ANOTHER profile — default and coder are independent stores, and
+          // reading one through the other is exactly the 404 the owner ruling
+          // forbids) clears the value here so it never re-fires on the next
+          // launch; a failed fetch keeps the remembered value for next launch
+          // instead of discarding it.
+          void resolveRememberedSessionId(
+            last,
+            id => getSession(id, activeProfile),
+            error => error instanceof Error && error.message.includes('404')
+          )
             .then(remembered => {
               if (!remembered || !sessionBelongsToProfile(sessions, remembered, activeProfile)) {
                 setRememberedSessionId(null, activeProfile)

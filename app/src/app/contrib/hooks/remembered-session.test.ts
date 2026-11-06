@@ -50,4 +50,32 @@ describe('resolveRememberedSessionId', () => {
       )
     ).resolves.toBe('branch')
   })
+
+  it('resolves null when the by-id read confirms the session is gone on this profile', async () => {
+    const gone = new Error('404: Session not found')
+
+    await expect(
+      resolveRememberedSessionId(
+        'foreign',
+        async () => {
+          throw gone
+        },
+        error => error instanceof Error && error.message.includes('404')
+      )
+    ).resolves.toBeNull()
+  })
+
+  it('still rejects when the read fails without a gone verdict (network / RPC)', async () => {
+    const boom = new Error('network down')
+
+    await expect(
+      resolveRememberedSessionId(
+        'whatever',
+        async () => {
+          throw boom
+        },
+        error => error instanceof Error && error.message.includes('404')
+      )
+    ).rejects.toBe(boom)
+  })
 })

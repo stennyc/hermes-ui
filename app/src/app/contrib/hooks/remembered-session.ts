@@ -16,9 +16,28 @@ import type { SessionInfo } from '@/types/hermes'
  */
 export async function resolveRememberedSessionId(
   id: string,
-  getSession: (id: string) => Promise<SessionInfo>
+  getSession: (id: string) => Promise<SessionInfo>,
+  /**
+   * Distinguishes "this profile has no such session" (an authoritative 404) from
+   * "the read itself failed" (network / RPC). When provided and it matches, a
+   * missed by-id read RESOLVES to null — the caller clears the remembered value
+   * — instead of rejecting and forcing it to survive for the next launch. The
+   * discriminator is the caller's (it knows its getSession error contract); a
+   * missing argument keeps the historical reject-on-any-failure behavior.
+   */
+  isSessionGone?: (error: unknown) => boolean
 ): Promise<null | string> {
-  const session = await getSession(id)
+  let session: SessionInfo
+
+  try {
+    session = await getSession(id)
+  } catch (error) {
+    if (isSessionGone?.(error)) {
+      return null
+    }
+
+    throw error
+  }
 
   return session.source === 'subagent' ? (session.parent_session_id ?? null) : session.id
 }
