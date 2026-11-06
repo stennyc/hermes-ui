@@ -269,6 +269,7 @@ function useSessionActions({
   const { t } = useI18n()
   const r = t.sidebar.row
   const [renameOpen, setRenameOpen] = useState(false)
+  const [copyFallbackOpen, setCopyFallbackOpen] = useState(false)
   // The rename item opens a Dialog. When a menu closes, Radix restores focus to
   // its trigger — for a sidebar row that trigger is the row's own <button>, so
   // focus lands there instead of the dialog's input: Space then activates the
@@ -561,7 +562,12 @@ function useSessionActions({
         iconClassName="size-3.5 text-current"
         key={r.copyId}
         label={r.copyId}
-        onCopyError={err => notifyError(err, r.copyIdFailed)}
+        onCopyError={err => {
+          notifyError(err, r.copyIdFailed)
+          if (sessionId) {
+            setCopyFallbackOpen(true)
+          }
+        }}
         text={sessionId}
       />
       <kit.Separator />
@@ -630,7 +636,22 @@ function useSessionActions({
     />
   )
 
-  return { deleteDialog, onCloseAutoFocus, renameDialog, renderItems }
+  const copyFallbackDialog = (
+    <Dialog onOpenChange={setCopyFallbackOpen} open={copyFallbackOpen}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{r.copyIdFailed}</DialogTitle>
+        </DialogHeader>
+        <Input
+          onFocus={event => event.currentTarget.select()}
+          readOnly
+          value={sessionId}
+        />
+      </DialogContent>
+    </Dialog>
+  )
+
+  return { copyFallbackDialog, deleteDialog, onCloseAutoFocus, renameDialog, renderItems }
 }
 
 interface DeleteSessionDialogProps {
@@ -671,7 +692,7 @@ interface SessionActionsMenuProps
 
 export function SessionActionsMenu({ children, align = 'end', sideOffset = 6, ...actions }: SessionActionsMenuProps) {
   const { t } = useI18n()
-  const { deleteDialog, onCloseAutoFocus, renameDialog, renderItems } = useSessionActions(actions)
+  const { copyFallbackDialog, deleteDialog, onCloseAutoFocus, renameDialog, renderItems } = useSessionActions(actions)
 
   return (
     <>
@@ -687,6 +708,7 @@ export function SessionActionsMenu({ children, align = 'end', sideOffset = 6, ..
       </ActionsMenu>
       {renameDialog}
       {deleteDialog}
+      {copyFallbackDialog}
     </>
   )
 }
@@ -697,7 +719,7 @@ interface SessionContextMenuProps extends SessionActions {
 
 export function SessionContextMenu({ children, ...actions }: SessionContextMenuProps) {
   const { t } = useI18n()
-  const { deleteDialog, onCloseAutoFocus, renameDialog, renderItems } = useSessionActions(actions)
+  const { copyFallbackDialog, deleteDialog, onCloseAutoFocus, renameDialog, renderItems } = useSessionActions(actions)
 
   return (
     <>
@@ -711,6 +733,7 @@ export function SessionContextMenu({ children, ...actions }: SessionContextMenuP
       </ActionsContextMenu>
       {renameDialog}
       {deleteDialog}
+      {copyFallbackDialog}
     </>
   )
 }
