@@ -1,6 +1,7 @@
 import { type MutableRefObject, useEffect, useRef } from 'react'
 
 import { isNewChatRoute } from '@/app/routes'
+import { lookupSessionOwnerProfile } from '@/store/session-owner-index'
 import { type SessionResumeRequest, setResumeExhaustedSessionId } from '@/store/session'
 import type { SessionProfileRoute } from '@/store/session-request-router'
 import { markSelectionRestore } from '@/store/session-states'
@@ -36,6 +37,17 @@ interface RouteResumeOptions {
   selectedStoredSessionId: string | null
   selectedStoredSessionIdRef: MutableRefObject<string | null>
   startFreshSessionDraft: (options: boolean | { replaceRoute?: boolean; rotateFreshDraftKey?: boolean }) => unknown
+  /**
+   * P13 (owner ruling 2026-11-06, "reads only the current profile"): the
+   * canonical key of the gateway profile the window is standing on. The
+   * routed id is a BARE id (the hash carries no profile), so before resuming
+   * it the P10 owner index is consulted: when the index knows the id lives
+   * on ANOTHER profile, the resume is dropped fail-closed into a fresh draft
+   * instead of 404ing on this profile and arming the bounded retry (the
+   * 75c6ac-style 5-way re-read cascade). Unknown ids (index miss) are not
+   * cross-profile evidence and still resume as before.
+   */
+  activeGatewayProfileKey?: string
 }
 
 // Bounded auto-retry for a stranded session window. A resume can fail terminally
@@ -108,7 +120,8 @@ export function useRouteResume({
   runtimeIdByStoredSessionIdRef,
   selectedStoredSessionId,
   selectedStoredSessionIdRef,
-  startFreshSessionDraft
+  startFreshSessionDraft,
+  activeGatewayProfileKey
 }: RouteResumeOptions) {
   const lastPathnameRef = useRef<string | null>(null)
   const seenGatewayStateRef = useRef(false)
@@ -193,6 +206,29 @@ export function useRouteResume({
       const stuckOnRoutedSession =
         routedSessionId !== selectedStoredSessionIdRef.current && !freshDraftReady && !selectionMovedAheadOfRoute
 
+      // P13 (owner ruling 2026-11-06, "reads only the current profile"): the
+      // routed id is bare — the hash carries no profile. When the P10 owner
+      // index knows it belongs to ANOTHER gateway profile, resuming it here
+      // would 404 on this profile and arm the bounded retry (the 75c6ac-style
+      // 5-way re-read cascade). Drop fail-closed into a fresh draft instead:
+      // no RPC, no REST fallback, no cross-profile read. A miss (index
+      // unknown) is not cross-profile evidence and still resumes.
+      const crossProfileRoute = (() => {
+        if (!activeGatewayProfileKey) {
+          return false
+        }
+
+        const owning = lookupSessionOwnerProfile(routedSessionId)
+
+        return Boolean(owning) && owning !== activeGatewayProfileKey
+      })()
+
+      if (crossProfileRoute) {
+        startFreshSessionDraft({ replaceRoute: true, rotateFreshDraftKey: false })
+
+        return
+      }
+
       // Resume when the route meaningfully changed, the gateway just opened, or
       // we're stranded on a routed session that never loaded. The first two
       // guard against a transient /:sid re-resume during "new chat" state clears
@@ -260,7 +296,8 @@ export function useRouteResume({
     runtimeIdByStoredSessionIdRef,
     selectedStoredSessionId,
     selectedStoredSessionIdRef,
-    startFreshSessionDraft
+    startFreshSessionDraft,
+    activeGatewayProfileKey
   ])
 
   // Bounded auto-retry: when the routed session's resume failed terminally

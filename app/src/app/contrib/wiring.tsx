@@ -797,7 +797,11 @@ export function ContribWiring({ children }: { children: ReactNode }) {
     runtimeIdByStoredSessionIdRef,
     selectedStoredSessionId,
     selectedStoredSessionIdRef,
-    startFreshSessionDraft
+    startFreshSessionDraft,
+    // P13: bare route ids resume only when the P10 index can't prove they
+    // belong to another profile — cross-profile evidence fails closed into
+    // a draft instead of a 404 + bounded-retry cascade.
+    activeGatewayProfileKey: normalizeProfileKey(activeGatewayProfile)
   })
 
   // Plugins hear the stream FIRST (isolated fan-out in contrib/events), then
