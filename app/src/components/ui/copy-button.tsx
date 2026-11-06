@@ -204,7 +204,16 @@ export function CopyButton({
         className={className}
         disabled={disabled}
         onSelect={event => {
-          event.preventDefault()
+          // In a non-secure context (plain http://IP) copy always routes
+          // through onCopyError into a manual-copy dialog — keeping this menu
+          // open underneath it stacks two Radix modal layers (the menu's
+          // focus trap, inert overlay and body pointer-events:none survive
+          // after the dialog closes and the whole UI is left unclickable).
+          // Close the menu naturally there; in a secure context the dialog
+          // never opens, so keep the item open for the "copied" flip.
+          if (typeof window === 'undefined' || window.isSecureContext) {
+            event.preventDefault()
+          }
           void copy(event)
         }}
       >
