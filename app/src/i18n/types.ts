@@ -2905,6 +2905,8 @@ export interface Translations extends NoticeTranslations {
       openInNewTab: string
       openInSplit: string
       copyIdFailed: string
+      copyIdManual: string
+      copyIdManualHint: string
       sessionActions: string
       sessionRunning: string
       needsInput: string

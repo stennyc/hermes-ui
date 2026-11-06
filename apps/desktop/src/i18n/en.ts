@@ -3321,6 +3321,8 @@ export const en: Translations = {
       openInNewTab: 'Open in new tab',
       openInSplit: 'Open in split',
       copyIdFailed: 'Could not copy session ID',
+      copyIdManual: 'Copy session ID manually',
+      copyIdManualHint: 'Automatic copy is unavailable in this browser. Select the ID below (it is preselected) and copy it with your keyboard.',
       sessionActions: 'Session actions',
       sessionRunning: 'Session running',
       needsInput: 'Needs your input',

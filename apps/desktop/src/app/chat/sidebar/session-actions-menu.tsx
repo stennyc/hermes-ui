@@ -641,8 +641,9 @@ function useSessionActions({
     <Dialog onOpenChange={setCopyFallbackOpen} open={copyFallbackOpen}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>{r.copyIdFailed}</DialogTitle>
+          <DialogTitle>{r.copyIdManual}</DialogTitle>
         </DialogHeader>
+        <p className="text-muted-foreground text-xs">{r.copyIdManualHint}</p>
         <Input
           onFocus={event => event.currentTarget.select()}
           readOnly

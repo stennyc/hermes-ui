@@ -124,6 +124,17 @@ export function CopyButton({
 
         await writeClipboardText(value)
 
+        // Non-secure context (plain http://IP): Chromium silently no-ops
+        // JS-driven clipboard writes — execCommand reports success without
+        // ever touching the system clipboard, so a "successful" write here
+        // cannot be trusted. Route through the manual-copy affordance
+        // regardless of the reported result so the value stays reachable
+        // (one dialog per click — the caller's onCopyError opens it).
+        if (typeof window !== 'undefined' && !window.isSecureContext) {
+          onCopyError?.(new Error('Clipboard is unavailable in this browser; manual copy required'))
+          return
+        }
+
         if (haptic) {
           triggerHaptic('selection')
         }
