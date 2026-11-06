@@ -21,13 +21,13 @@ import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { ColorSwatches } from '@/components/ui/color-swatches'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import { CopyButton } from '@/components/ui/copy-button'
+import { CopyButton, writeClipboardText } from '@/components/ui/copy-button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { renameSession } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
-import { ArchiveOff } from '@/lib/icons'
+import { ArchiveOff, Copy } from '@/lib/icons'
 import { isSubmitEnter } from '@/lib/ime'
 import { PROFILE_SWATCHES } from '@/lib/profile-color'
 import { exportSession } from '@/lib/session-export'
@@ -270,6 +270,7 @@ function useSessionActions({
   const r = t.sidebar.row
   const [renameOpen, setRenameOpen] = useState(false)
   const [copyFallbackOpen, setCopyFallbackOpen] = useState(false)
+  const [manualCopied, setManualCopied] = useState(false)
   // The rename item opens a Dialog. When a menu closes, Radix restores focus to
   // its trigger — for a sidebar row that trigger is the row's own <button>, so
   // focus lands there instead of the dialog's input: Space then activates the
@@ -558,13 +559,16 @@ function useSessionActions({
       <CopyButton
         appearance={kit.copyAppearance}
         disabled={!sessionId}
-        errorMessage={r.copyIdFailed}
         iconClassName="size-3.5 text-current"
         key={r.copyId}
         label={r.copyId}
-        onCopyError={err => {
-          notifyError(err, r.copyIdFailed)
+        onCopyError={() => {
           if (sessionId) {
+            // The dialog's input steals focus from the menu's focus trap;
+            // without this, the trap's close-time focus restore fights the
+            // dialog and the underlying UI is left unclickable until a
+            // refresh (same one-line guard the Rename item already uses).
+            suppressCloseFocusRef.current = true
             setCopyFallbackOpen(true)
           }
         }}
@@ -638,17 +642,56 @@ function useSessionActions({
   )
 
   const copyFallbackDialog = (
-    <Dialog onOpenChange={setCopyFallbackOpen} open={copyFallbackOpen}>
+    <Dialog
+      onOpenChange={(nextOpen) => {
+        setCopyFallbackOpen(nextOpen)
+        if (!nextOpen) {
+          setManualCopied(false)
+        }
+      }}
+      open={copyFallbackOpen}
+    >
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>{r.copyIdManual}</DialogTitle>
         </DialogHeader>
         <p className="text-muted-foreground text-xs">{r.copyIdManualHint}</p>
-        <Input
-          onFocus={event => event.currentTarget.select()}
-          readOnly
-          value={sessionId}
-        />
+        <div className="flex items-center gap-2">
+          <Input
+            className="flex-1"
+            onFocus={event => event.currentTarget.select()}
+            readOnly
+            value={sessionId}
+          />
+          <Button
+            onClick={async () => {
+              const input = document.querySelector<HTMLInputElement>('input[readonly]')
+              if (input) {
+                input.focus()
+                input.select()
+              }
+              // Try the real write first (genuine selected-text path keeps
+              // working in secure contexts); in the non-secure context the
+              // user's own keyboard Ctrl+C from the now-focused+selected
+              // input is the fallback — either way the value stays reachable.
+              try {
+                await writeClipboardText(sessionId ?? '')
+              } catch {
+                // Non-secure context: the selection is already in place, so
+                // the user's Ctrl+C copies it directly. No error surface
+                // needed here — the dialog IS the affordance.
+              }
+              setManualCopied(true)
+            }}
+            size="icon"
+            variant="outline"
+          >
+            <Copy className="size-4" />
+          </Button>
+        </div>
+        {manualCopied && (
+          <p className="text-muted-foreground text-xs">{t.common.copied}</p>
+        )}
       </DialogContent>
     </Dialog>
   )
