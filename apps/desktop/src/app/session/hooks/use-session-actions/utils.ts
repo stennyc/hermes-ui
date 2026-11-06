@@ -21,6 +21,10 @@ import { pendingSnapshotFence, reconcilePendingSubmissions } from '@/store/pendi
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 import { $projectTree } from '@/store/projects'
 import {
+  defaultOwnerIndexBackfill,
+  ensureSessionOwnerIndexed
+} from '@/store/session-owner-index'
+import {
   $cronSessions,
   $currentCwd,
   $messagingSessions,
@@ -2171,11 +2175,13 @@ export async function resolveStoredSession(
 
 /** `resolveStoredSession` with the verdict kept: with an `ownerRoute`, a
  *  single fail-closed by-id read on that owner (a 404 ⇒ `gone`, anything else
- *  `inconclusive`). WITHOUT an owner, never a cross-profile sweep (P8, owner
- *  ruling 2026-11-05): return the cached row if there is one, else
- *  `inconclusive` — a 404 stays a 404 and no longer amplifies into N profile
- *  4xx. Sessions owned by another profile than the active one are opened by
- *  switching profiles, not by probing all of them. */
+ *  `inconclusive`). WITHOUT an owner, the P10 owner index answers which
+ *  profile holds the id (fed by the native /api/profiles/sessions pages,
+ *  backfilled once and silently on a confirmed miss): one owner-pinned by-id
+ *  read on the named profile, then 404 ⇒ `gone`, miss ⇒ `inconclusive`.
+ *  There is no cross-profile fan-out — a session owned by another profile
+ *  than the active one is opened by switching profiles, not by probing all
+ *  of them. */
 export async function probeStoredSession(
   storedSessionId: string,
   ownerRoute?: SessionProfileRoute
@@ -2224,13 +2230,38 @@ export async function probeStoredSession(
     }
   }
 
-  // No owner pinned and no cached owning row: there is no way to know which
-  // profile holds this id without a cross-profile sweep, and the sweep is
-  // gone (P8, owner ruling 2026-11-05). A caller WITHOUT an owner must not
-  // fan out; report the row it actually has, else inconclusive. 404 stays a
-  // 404 — it no longer amplifies into N profile 4xx.
+  // No owner pinned and no cached owning row: P8 removed the cross-profile
+  // sweep, and P10 replaces it with a LOOKUP — the id→profile index fed by
+  // the native /api/profiles/sessions pages. A hit names the owning profile,
+  // so the read stays a SINGLE owner-pinned by-id request (a 404 ⇒ `gone`);
+  // a confirmed miss (surviving a silent backfill) stays `inconclusive` —
+  // never a fan-out, and the session is opened by switching profiles in the
+  // UI instead of probing every profile again.
   if (cached) {
     return { status: 'found', session: cached }
+  }
+
+  const indexedProfile = await ensureSessionOwnerIndexed(storedSessionId, defaultOwnerIndexBackfill)
+
+  if (indexedProfile) {
+    try {
+      // A bare profile string, not an object scope: sessionReadOwnerPin only
+      // pins a connection when the caller already knows the owner's connection
+      // (object form). The index names the PROFILE only, so the read stays a
+      // single `?profile=<p>` by-id request on the ambient connection — the
+      // P10 contract is "one owner-pinned read on the named profile", never a
+      // connection guess.
+      const session = await getSession(storedSessionId, normalizeProfileKey(indexedProfile))
+
+      session.profile = normalizeProfileKey(indexedProfile)
+      upsertResolvedSession(session, storedSessionId, tombstoneGenerationsAtRequestStart)
+
+      return { status: 'found', session }
+    } catch (error) {
+      recordFailure(error)
+
+      return { status: allGone ? 'gone' : 'inconclusive' }
+    }
   }
 
   return { status: 'inconclusive' }
@@ -2238,8 +2269,10 @@ export async function probeStoredSession(
 
 /**
  * The profile that owns a stored session, resolved through
- * `resolveStoredSession`: a pinned owner (single by-id read) or the cached
- * row. Without either, it returns undefined — no cross-profile sweep (P8).
+ * `resolveStoredSession`: a pinned owner (single by-id read), the cached
+ * row, or the P10 owner-index backfill (one silent unified list page, then a
+ * single owner-pinned by-id read). Without any of those it returns
+ * undefined — no cross-profile sweep.
  *
  * Recovery `session.resume` calls must re-register the conversation on ITS
  * backend, not on whichever profile happens to be live. When the owning
@@ -2265,7 +2298,8 @@ export async function resolveSessionProfile(storedSessionId: null | string): Pro
  * registry-owned session never degrades to a profile-only route that dials a
  * different socket than the one holding its runtime. Without a sync-ladder
  * hit, falls back to `resolveStoredSession` — a pinned owner (single by-id
- * read) or the cached row, never a cross-profile sweep (P8).
+ * read), the cached row, or the P10 owner-index backfill; never a
+ * cross-profile sweep.
  */
 export async function resolveSessionOwner(storedSessionId: null | string): Promise<SessionOwnerScope> {
   if (!storedSessionId) {

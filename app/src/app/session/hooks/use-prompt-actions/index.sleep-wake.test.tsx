@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getLatestSessionMessages, getSession } from '@/hermes'
 import { textPart } from '@/lib/chat-messages'
 import { $busy, $messages, $turnStartedAt, setMessages, setSessions } from '@/store/session'
+import { __resetSessionOwnerIndexForTests, recordSessionOwners } from '@/store/session-owner-index'
 
 import { actRender, Harness, type HarnessHandle, RUNTIME_SESSION_ID, sessionInfo } from './index-test-utils'
 import { clearSingleFlightSessionResumeState } from './single-flight-resume'
@@ -45,6 +46,7 @@ describe('usePromptActions sleep/wake session recovery', () => {
     cleanup()
     $turnStartedAt.set(null)
     vi.restoreAllMocks()
+    __resetSessionOwnerIndexForTests()
   })
 
   it('resumes the stored session and retries once when prompt.submit reports "session not found"', async () => {
@@ -268,6 +270,10 @@ describe('usePromptActions sleep/wake session recovery', () => {
     // the finally below so this resolved value never leaks into sibling tests.
     setSessions(() => [])
     vi.mocked(getSession).mockResolvedValue(sessionInfo({ id: STORED_SESSION_ID, profile: 'work' }))
+    // P10: the owner index is fed by the native /api/profiles/sessions page.
+    // Seed it with the owning profile so the cache-missed resolve pins the
+    // by-id read onto 'work' instead of resuming profile-blind.
+    recordSessionOwners([{ id: STORED_SESSION_ID, profile: 'work' }])
 
     const calls: { method: string; params?: Record<string, unknown> }[] = []
     let submitAttempts = 0

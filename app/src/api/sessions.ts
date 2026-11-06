@@ -1,6 +1,7 @@
 import { isMissingRestEndpoint, isUnroutedRestPath } from '@/lib/gateway-rpc'
 import { stampRowsWithOwningConnection } from '@/lib/session-owner-stamp'
 import { pageHonorsLatestOrder, recordTranscriptTail } from '@/store/transcript-tail'
+import { recordSessionOwners } from '@/store/session-owner-index'
 import type {
   PaginatedSessions,
   ProfileInfo,
@@ -156,9 +157,17 @@ export async function listAllProfileSessions(
     timeoutMs: SESSION_LIST_REQUEST_TIMEOUT_MS
   })
 
+  // P10: every successful unified page names the owner of every row it
+  // returned — fold that into the id→profile index so a cache-missed by-id
+  // read resolves without probing profiles one by one (the cascade P8 killed
+  // had to come back as a sweep, so it is replaced by a lookup instead).
+  const stamped = stampActiveConnectionOwner(result.sessions)
+
+  recordSessionOwners(stamped)
+
   return {
     ...result,
-    sessions: pageWindow(stampActiveConnectionOwner(result.sessions), limit),
+    sessions: pageWindow(stamped, limit),
     offset: Math.max(0, offset)
   }
 }
@@ -348,20 +357,28 @@ export async function listSidebarSessions(req: SidebarSessionsRequest): Promise<
     return listSidebarSessionsLegacy(req)
   }
 
+  const recentsStamped = stampActiveConnectionOwner(result.recents?.sessions ?? [])
+  const cronStamped = stampActiveConnectionOwner(result.cron?.sessions ?? [])
+  const messagingStamped = stampActiveConnectionOwner(result.messaging?.sessions ?? [])
+
+  // P10: the sidebar batch is the index's main feeder — one unified page per
+  // refresh already carries every row's owning profile tag.
+  recordSessionOwners([...recentsStamped, ...cronStamped, ...messagingStamped])
+
   return {
     recents: {
       ...result.recents,
-      sessions: stampActiveConnectionOwner(result.recents?.sessions ?? []),
+      sessions: recentsStamped,
       ...(result.errors?.length ? { errors: result.errors } : {})
     },
     cron: {
       ...result.cron,
-      sessions: stampActiveConnectionOwner(result.cron?.sessions ?? []),
+      sessions: cronStamped,
       ...(result.errors?.length ? { errors: result.errors } : {})
     },
     messaging: {
       ...result.messaging,
-      sessions: stampActiveConnectionOwner(result.messaging?.sessions ?? []),
+      sessions: messagingStamped,
       ...(result.errors?.length ? { errors: result.errors } : {})
     },
     errors: result.errors,
