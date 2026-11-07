@@ -122,18 +122,15 @@ export function CopyButton({
           return
         }
 
+        // In a non-secure context (plain http://IP) the scratch-textarea
+        // execCommand path can genuinely write the system clipboard, so a
+        // successful write is trusted here — no forced manual-copy dialog.
+        // If it can't write (bridge reports false, or no clipboard channel
+        // at all), writeClipboardText throws and the catch below routes to
+        // onCopyError, which is when the caller's manual-copy affordance
+        // opens. Success and failure are distinguished by the real result,
+        // not by the security context.
         await writeClipboardText(value)
-
-        // Non-secure context (plain http://IP): Chromium silently no-ops
-        // JS-driven clipboard writes — execCommand reports success without
-        // ever touching the system clipboard, so a "successful" write here
-        // cannot be trusted. Route through the manual-copy affordance
-        // regardless of the reported result so the value stays reachable
-        // (one dialog per click — the caller's onCopyError opens it).
-        if (typeof window !== 'undefined' && !window.isSecureContext) {
-          onCopyError?.(new Error('Clipboard is unavailable in this browser; manual copy required'))
-          return
-        }
 
         if (haptic) {
           triggerHaptic('selection')

@@ -127,10 +127,43 @@ describe('CopyButton menu-item close behavior', () => {
       await new Promise((r) => setTimeout(r, 50))
     })
 
-    // No preventDefault, so Radix requested a close — the manual-copy
-    // dialog (onCopyError) now opens on a clean base, not on a live menu.
+    // No preventDefault, so Radix requested a close — no stacked modal layer.
     expect(onOpenChange).toHaveBeenCalledWith(false)
-    // The non-secure escalation still fires so the dialog opens.
+    // B: in a non-secure context a successful write is trusted, so the
+    // in-place copy succeeds and no manual-copy dialog is forced.
+    expect(onCopied).toHaveBeenCalledTimes(1)
+    expect(onCopyError).not.toHaveBeenCalled()
+  })
+
+  it('in a non-secure context a failed write still opens the dialog and closes the menu', async () => {
+    ;(window as { hermesDesktop?: unknown }).hermesDesktop = {
+      writeClipboard: vi.fn(async () => false),
+    }
+    withSecureContext(false)
+
+    const onCopyError = vi.fn()
+    const onCopied = vi.fn()
+    const onOpenChange = vi.fn()
+    render(
+      <DropdownMenu onOpenChange={onOpenChange} open>
+        <DropdownMenuTrigger>
+          <button type="button">open</button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <CopyButton appearance="menu-item" onCopyError={onCopyError} onCopied={onCopied} text="abc" />
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
+
+    selectCopyRow()
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    // The menu still closes naturally (no preventDefault), and the failed
+    // write escalates to the caller's manual-copy affordance.
+    expect(onOpenChange).toHaveBeenCalledWith(false)
     expect(onCopyError).toHaveBeenCalledTimes(1)
     expect(onCopied).not.toHaveBeenCalled()
   })
@@ -145,7 +178,7 @@ describe('CopyButton non-secure-context manual copy', () => {
     document.body.replaceChildren()
   })
 
-  it('routes through onCopyError (manual dialog) in a non-secure context even when the write reports success', async () => {
+  it('in a non-secure context a genuine write success is trusted (no forced dialog)', async () => {
     ;(window as { hermesDesktop?: unknown }).hermesDesktop = {
       writeClipboard: vi.fn(async () => true),
     }
@@ -162,11 +195,35 @@ describe('CopyButton non-secure-context manual copy', () => {
     })
 
     // The bridge write still runs (genuine selected-text copies must keep
-    // working) — the reported success is simply not trusted in a
-    // non-secure context.
+    // working). In a non-secure context a reported success is now trusted
+    // (the scratch-textarea execCommand path genuinely writes the system
+    // clipboard), so no manual-copy dialog is forced.
     expect((window as unknown as { hermesDesktop: { writeClipboard: ReturnType<typeof vi.fn> } }).hermesDesktop.writeClipboard).toHaveBeenCalledWith(
       '20261106_123456'
     )
+    expect(onCopyError).not.toHaveBeenCalled()
+    expect(onCopied).toHaveBeenCalledTimes(1)
+  })
+
+  it('in a non-secure context a genuine write failure still routes through onCopyError (manual dialog)', async () => {
+    ;(window as { hermesDesktop?: unknown }).hermesDesktop = {
+      writeClipboard: vi.fn(async () => false),
+    }
+    withSecureContext(false)
+
+    const onCopyError = vi.fn()
+    const onCopied = vi.fn()
+
+    render(<CopyButton appearance="button" onCopyError={onCopyError} onCopied={onCopied} text="20261106_123456" />)
+
+    const button = screen.getByRole('button', { name: 'Copy' })
+    await act(() => {
+      fireEvent.click(button)
+    })
+
+    // The bridge reports the system clipboard was NOT written -> the caller's
+    // manual-copy affordance opens. This is the regression guard: B trusts the
+    // result, not the security context, so a real failure still escalates.
     expect(onCopyError).toHaveBeenCalledTimes(1)
     expect(onCopied).not.toHaveBeenCalled()
   })
