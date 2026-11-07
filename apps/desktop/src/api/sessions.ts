@@ -1,6 +1,6 @@
 import { isMissingRestEndpoint, isUnroutedRestPath } from '@/lib/gateway-rpc'
 import { stampRowsWithOwningConnection } from '@/lib/session-owner-stamp'
-import { recordSessionOwners } from '@/store/session-owner-index'
+import { lookupSessionOwnerProfile, recordSessionOwners } from '@/store/session-owner-index'
 import { recordTranscriptAlive } from '@/store/transcript-gone'
 import { pageHonorsLatestOrder, recordTranscriptTail } from '@/store/transcript-tail'
 import type {
@@ -45,6 +45,64 @@ function sessionScoped(scope?: ProfileScope): { connectionId?: string; profile?:
   }
 
   return scoped
+}
+
+/**
+ * P14 (owner ruling 2026-11-07): the read-side ownership gate. Before ANY
+ * by-id session read fires, ask the P10 index who owns this id. If the owner
+ * is a DIFFERENT profile than the effective request profile (an explicit pin
+ * from the caller, else the active gateway profile) → the read is cross-profile
+ * by construction → DON'T send it. Fail-closed: reject a 404
+ * SESSION_NOT_FOUND error so callers' `.catch` treats it as a miss (A path),
+ * zero HTTP, zero cascade. An explicit `profile` pin ALWAYS wins (a deliberate
+ * profile read is legitimate, not a sweep). Index miss (cold index) → no gate
+ * → the read proceeds as today (no mis-kill of a fresh session).
+ */
+function readSideGateError(id: string, profile?: ProfileScope): Promise<never | null> {
+  return (async () => {
+    if (profile != null && typeof profile === 'string' && profile.trim() !== '') {
+      // An explicit profile pin is a deliberate cross-profile read — legitimate.
+      return null
+    }
+
+    const ownerProfile = lookupSessionOwnerProfile(id)
+
+    if (!ownerProfile) {
+      // Cold index / not yet listed → no ownership evidence → proceed.
+      return null
+    }
+
+    const effectiveProfile = profile != null && typeof profile === 'object' ? profile.profile : getApiRequestProfile()
+
+    if (!effectiveProfile) {
+      // No active profile to compare against (e.g. tests, cold boot) → proceed.
+      return null
+    }
+
+    // P14 cycle guard: `normalizeProfileKey` lives in `@/store/profile`, whose
+    // top-level `@/hermes` import barrel re-exports `./api/sessions` — a static
+    // import here closes the module cycle and detonates the `setApiRequestProfile`
+    // subscribe callback during vitest's strict ESM init. `normalizeProfileKey`
+    // is a pure function (no side effects, no @/hermes dependency), so a lazy
+    // import is safe and matches the P10 `defaultOwnerIndexBackfill` pattern.
+    const { normalizeProfileKey } = await import('@/store/profile')
+
+    if (normalizeProfileKey(ownerProfile) === normalizeProfileKey(effectiveProfile)) {
+      // Same profile → normal read.
+      return null
+    }
+
+    // Cross-profile by-id read → refuse before any HTTP. Callers' .catch already
+    // treats a 404 "Session not found" as a miss, so the verdict match (P11's
+    // 404-discriminator) sees it as a clean miss and the 5-fade retry loop
+    // short-circuits on the first skip.
+    const err = Object.assign(new Error(`404: Session not found: ${id}`), {
+      status: 404,
+      code: 'SESSION_NOT_FOUND'
+    })
+
+    return Promise.reject(err)
+  })()
 }
 
 /**
@@ -491,16 +549,23 @@ export function searchSessions(query: string, profile?: null | string): Promise<
 // here. There is no cross-profile sweep: default and any other profile are
 // independent, and reading one through the other is how the 404s started.
 export function getSession(id: string, profile?: ProfileScope, options: { passive?: boolean } = {}): Promise<SessionInfo> {
-  // Pin the read to the session's OWNER connection (#125372): the ambient dial
-  // 404s on the wrong backend whenever two connections expose a same-named
-  // profile.
-  const scope = { ...sessionScoped(profile), ...sessionReadOwnerPin(id, profile) }
-  const suffix = scope.profile ? `?profile=${encodeURIComponent(scope.profile)}` : ''
+  // P14: refuse a cross-profile by-id read BEFORE any HTTP (owner ruling 2026-11-07).
+  return readSideGateError(id, profile).then(async gated => {
+    if (gated) {
+      return gated
+    }
 
-  return hermesApi<SessionInfo>({
-    ...scope,
-    path: `/api/sessions/${encodeURIComponent(id)}${suffix}`,
-    ...(options.passive ? { passive: true } : {})
+    // Pin the read to the session's OWNER connection (#125372): the ambient dial
+    // 404s on the wrong backend whenever two connections expose a same-named
+    // profile.
+    const scope = { ...sessionScoped(profile), ...sessionReadOwnerPin(id, profile) }
+    const suffix = scope.profile ? `?profile=${encodeURIComponent(scope.profile)}` : ''
+
+    return hermesApi<SessionInfo>({
+      ...scope,
+      path: `/api/sessions/${encodeURIComponent(id)}${suffix}`,
+      ...(options.passive ? { passive: true } : {})
+    })
   })
 }
 
@@ -514,37 +579,48 @@ export function getSessionMessages(
   page: { limit?: number; offset?: number; order?: 'latest' | 'oldest'; includeCompacted?: boolean } = {},
   options: { passive?: boolean } = {}
 ): Promise<SessionMessagesResponse> {
-  const query = new URLSearchParams()
+  // P14: refuse a cross-profile by-id transcript read BEFORE any HTTP
+  // (owner ruling 2026-11-07). The 5-fade `/messages?limit=120` source is
+  // exactly this path — getLatestSessionMessages funnels here, so gating the
+  // single source covers both the limit=120 tick AND the
+  // include_compacted=true deep-read.
+  return readSideGateError(id, profile).then(async gated => {
+    if (gated) {
+      return gated
+    }
 
-  // Owner connection pin (#125372) — see getSession.
-  const sessionScope = { ...sessionScoped(profile), ...sessionReadOwnerPin(id, profile) }
+    const query = new URLSearchParams()
 
-  if (sessionScope.profile) {
-    query.set('profile', sessionScope.profile)
-  }
+    // Owner connection pin (#125372) — see getSession.
+    const sessionScope = { ...sessionScoped(profile), ...sessionReadOwnerPin(id, profile) }
 
-  if (page.limit !== undefined) {
-    query.set('limit', String(page.limit))
-  }
+    if (sessionScope.profile) {
+      query.set('profile', sessionScope.profile)
+    }
 
-  if (page.offset !== undefined) {
-    query.set('offset', String(page.offset))
-  }
+    if (page.limit !== undefined) {
+      query.set('limit', String(page.limit))
+    }
 
-  if (page.order) {
-    query.set('order', page.order)
-  }
+    if (page.offset !== undefined) {
+      query.set('offset', String(page.offset))
+    }
 
-  if (page.includeCompacted !== undefined) {
-    query.set('include_compacted', String(page.includeCompacted))
-  }
+    if (page.order) {
+      query.set('order', page.order)
+    }
 
-  const suffix = query.size ? `?${query.toString()}` : ''
+    if (page.includeCompacted !== undefined) {
+      query.set('include_compacted', String(page.includeCompacted))
+    }
 
-  return hermesApi<SessionMessagesResponse>({
-    ...sessionScope,
-    path: `/api/sessions/${encodeURIComponent(id)}/messages${suffix}`,
-    ...(options.passive ? { passive: true } : {})
+    const suffix = query.size ? `?${query.toString()}` : ''
+
+    return hermesApi<SessionMessagesResponse>({
+      ...sessionScope,
+      path: `/api/sessions/${encodeURIComponent(id)}/messages${suffix}`,
+      ...(options.passive ? { passive: true } : {})
+    })
   })
 }
 
