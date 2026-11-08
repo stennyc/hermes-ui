@@ -680,6 +680,7 @@ export function AppContextMenu() {
       // Stop pane/row fallback menus without cancelling the native menu.
       // Explicit app actions live in More.
       if (isBrowserOwnedTouch(event)) {
+        event.preventDefault()
         event.stopPropagation()
 
         return
@@ -692,6 +693,10 @@ export function AppContextMenu() {
       if (trigger && !trigger.hasAttribute('data-zone-body')) {
         // A text field in one (the Files tree's inline rename) still keeps the browser's own menu.
         leaveRowTextFieldToBrowser(event, element)
+        // Web host: suppress the native menu when no text-field handler claimed the gesture.
+        if (hostHas('browserContextMenu')) {
+          event.preventDefault()
+        }
 
         return
       }
@@ -744,12 +749,22 @@ export function AppContextMenu() {
 
       // A selection elsewhere in the same pane must not take its bare menu.
       if (!owned && trigger) {
+        // Web host: suppress the native browser menu.
+        if (hostHas('browserContextMenu')) {
+          event.preventDefault()
+        }
+
         return
       }
 
       // The reaction bubble owns bare right-clicks; a link inside it still
       // opens the link menu.
       if (!owned && element?.closest(`[${CONTEXT_MENU_SKIP_ATTR}]`)) {
+        // Web host: suppress the native browser menu.
+        if (hostHas('browserContextMenu')) {
+          event.preventDefault()
+        }
+
         return
       }
 
