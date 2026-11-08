@@ -1,5 +1,6 @@
 // Completion sound bank for agent turn-end cues.
-// Fourteen curated presets for A/B in Settings → Appearance. Default is variant 1.
+// Fourteen curated presets for A/B in Settings → Appearance, plus variant 0
+// ("None") to turn the cue off. Default is variant 1.
 
 import { getAudioContext } from '@/lib/audio-context'
 import { ownsAmbientCue } from '@/store/ambient'
@@ -434,15 +435,16 @@ function playVariant(variantId: number) {
 }
 
 // Audition the selected variant from settings. Bypasses the haptics mute toggle so
-// sound design can be compared even when turn-end cues are silenced.
+// sound design can be compared even when turn-end cues are silenced. "None" stays
+// silent — playVariant never schedules it.
 export function previewCompletionSound(variantId?: number) {
   playVariant(resolveCompletionSoundVariantId(variantId ?? $completionSoundVariantId.get()))
 }
 
 // Plays the selected completion cue on any `message.complete`. Pass a dedupeKey
-// (the session id) so only one window beeps when several are open — the mute
-// check runs first, so a muted window never claims the cue out from under an
-// audible peer.
+// (the session id) so only one window beeps when several are open — the mute and
+// "None" checks run first, so a silent window never claims the cue out from under
+// an audible peer.
 export function playCompletionSound(dedupeKey?: string) {
   if ($hapticsMuted.get()) {
     return
@@ -460,6 +462,7 @@ export function playCompletionSound(dedupeKey?: string) {
     return play()
   }
 
+  // A user can mute this window while the ownership request is in flight.
   void ownsAmbientCue(`sound:${dedupeKey}`).then(owns => owns && !$hapticsMuted.get() && play())
 }
 
