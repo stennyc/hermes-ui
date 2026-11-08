@@ -72,7 +72,7 @@ export const githubTheme: DesktopTheme = {
   typography: {
     fontSans: SYSTEM_SANS,
     fontMono: SYSTEM_MONO,
-    fontUrl: 'https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&display=swap'
+    fontUrl: '/fonts/themefonts.css'
   },
   terminal: {
     foreground: '#1f2328',
@@ -135,7 +135,7 @@ export const nousTheme: DesktopTheme = {
   typography: {
     fontSans: SYSTEM_SANS,
     fontMono: SYSTEM_MONO,
-    fontUrl: 'https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&display=swap'
+    fontUrl: '/fonts/themefonts.css'
   },
   terminal: {
     foreground: '#1f2328',
@@ -335,7 +335,7 @@ export const nousAltTheme: DesktopTheme = {
   typography: {
     fontSans: SYSTEM_SANS,
     fontMono: SYSTEM_MONO,
-    fontUrl: 'https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&display=swap'
+    fontUrl: '/fonts/themefonts.css'
   }
 }
 
@@ -395,7 +395,7 @@ export const midnightTheme: DesktopTheme = {
   ...THEME_PRESET_PALETTES.midnight,
   typography: {
     fontMono: `"JetBrains Mono", ${SYSTEM_MONO}`,
-    fontUrl: 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap'
+    fontUrl: '/fonts/themefonts.css'
   }
 }
 
@@ -406,7 +406,7 @@ export const emberTheme: DesktopTheme = {
   ...THEME_PRESET_PALETTES.ember,
   typography: {
     fontMono: `"IBM Plex Mono", ${SYSTEM_MONO}`,
-    fontUrl: 'https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap'
+    fontUrl: '/fonts/themefonts.css'
   }
 }
 
