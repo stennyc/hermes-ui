@@ -50,7 +50,7 @@ import {
   $stalledSessionIds
 } from '@/store/session-states'
 import { loadArchivedSessions } from '@/store/sidebar-archive'
-import { isTranscriptGone, markTranscriptGone } from '@/store/transcript-gone'
+import { armTranscriptGone, isTranscriptGone } from '@/store/transcript-gone'
 import {
   clearActiveSessionTodos,
   clearSessionTodos,
@@ -426,8 +426,10 @@ export async function reconcileTileTranscripts({
     } catch (error) {
       // P12: a confirmed session-not-found retires the re-reads for this id
       // (list page / gateway switch bring it back; see transcript-gone.ts).
+      // P14 refinement: arm with the tile's own owner scope so a cross-profile
+      // 404 stamps the verdict with owner evidence (survives list pages).
       if (isTranscriptReadGone(error)) {
-        markTranscriptGone(storedSessionId)
+        armTranscriptGone(storedSessionId, profileScope, error)
       }
       // Non-fatal: the next change event retries.
     }
@@ -545,8 +547,10 @@ export async function hydrateStoredSessionTranscript({
     } catch (error) {
       // P12: a confirmed session-not-found retires the re-reads for this id
       // (list page / gateway switch bring it back; see transcript-gone.ts).
+      // P14: arm with the stored owner scope so a cross-profile 404 keeps its
+      // owner evidence and survives list-page refreshes.
       if (isTranscriptReadGone(error)) {
-        markTranscriptGone(storedSessionId)
+        armTranscriptGone(storedSessionId, storedProfile, error)
       }
       // Best-effort fallback when live stream payloads are empty.
     }
@@ -707,8 +711,10 @@ export async function reconcileActiveTranscript({
     // a list page lists it again (recordTranscriptAlive) or a gateway switch
     // wipes the set. Anything else (network / RPC / backend down) stays
     // retryable — only a 404 is a "gone" claim.
+    // P14: arm with the active pane's resolved owner scope so a cross-profile
+    // 404 keeps its owner evidence (survives list-page refreshes).
     if (isTranscriptReadGone(error)) {
-      markTranscriptGone(storedSessionId)
+      armTranscriptGone(storedSessionId, profileScopeForTranscriptSession(stored), error)
     }
     // Non-fatal: the next change event or manual resume can hydrate the view.
   }
