@@ -6,13 +6,16 @@ const STORAGE_KEY = 'hermes.desktop.completionSoundVariantId'
 
 export const DEFAULT_COMPLETION_SOUND_VARIANT_ID = 1
 
+// "None": variant 0 disables the turn-end cue but stays a selectable settings value.
+export const NO_COMPLETION_SOUND_VARIANT_ID = 0
+
 // Range mirrors COMPLETION_SOUND_VARIANTS in lib/completion-sound.ts. Validating
 // by range (not membership) keeps this store free of a dependency on the lib,
 // which imports the atom back — a membership check would close that cycle.
 const VARIANT_COUNT = 14
 
 export function resolveCompletionSoundVariantId(variantId: number): number {
-  return Number.isInteger(variantId) && variantId >= 1 && variantId <= VARIANT_COUNT
+  return Number.isInteger(variantId) && variantId >= NO_COMPLETION_SOUND_VARIANT_ID && variantId <= VARIANT_COUNT
     ? variantId
     : DEFAULT_COMPLETION_SOUND_VARIANT_ID
 }
