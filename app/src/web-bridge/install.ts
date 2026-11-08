@@ -12,6 +12,11 @@ import { createWebBridge } from './bridge'
 
 if (typeof window !== 'undefined' && !window.hermesDesktop) {
   window.hermesDesktop = createWebBridge()
+  // Tag the host so host-capability gates (hostHas) classify this as a browser host
+  // for the lifetime of the session. Without this marker, isBrowserHostedDesktop()
+  // returns false and every browser-specific branch (contextmenu preventDefault,
+  // zoom, notifications, …) is silently skipped.
+  document.documentElement.dataset.hermesDesktopHost = 'browser'
 }
 
 export {}
