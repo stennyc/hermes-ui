@@ -45,13 +45,6 @@ const ALIVE_TTL_MS = 10 * 60_000
 // Ids verified ALIVE this app session, id -> verdict expiry timestamp — later
 // sweeps skip re-probing ids whose verdict is still fresh.
 const alive = new Map<string, number>()
-// Ids verified DEAD (404 on EVERY known profile) at drop time. Unlike the
-// in-memory `alive` cache these survive an app restart: their stale local
-// reference (a deep link, a persisted pane) is what keeps re-arming the full
-// per-profile 404 sweep on every boot. Re-probed only after the profile
-// inventory grows (a new profile could now own the id) or after a gateway
-// switch (the measured backend is gone).
-const dead = new Map<string, Set<string>>()
 // Ids currently mid-probe, so overlapping sweeps don't double-probe.
 const inFlight = new Set<string>()
 
@@ -71,22 +64,59 @@ function isNotFoundError(error: unknown): boolean {
 }
 
 /**
- * A stored id is dead when a by-id lookup 404s on the CURRENTLY selected
- * profile (P9, owner ruling 2026-11-05/06). Liveness is judged on that
- * profile ONLY — never probed across other profiles: a sweep would use the
- * default profile to read every other profile, which the ruling forbids. A
- * non-404 failure (5xx / network) is `unknown`, never a dead verdict. A
- * session living on another profile is not kept alive here: its local
- * draft/pin is not this profile's to hold.
+ * A stored id is dead only if a by-id lookup 404s on the active profile AND on
+ * every named profile. The active-scope probe covers single-profile installs;
+ * named-profile probes rule out sessions living on another profile.
+ *
+ * Completeness assumption: `$profiles` is the same profile list the UI uses to
+ * route and resolve sessions (resolveStoredSession, the picker). A session on
+ * a profile the app does not know about is unreachable in the UI — it cannot
+ * be opened, pinned, or drafted — so ids stored locally always reference a
+ * listed profile. When the list is EMPTY (not yet loaded) nothing is declared
+ * dead: another profile we can't rule out might own the id.
  */
 async function sessionVerdict(id: string): Promise<Verdict> {
+  const activeKey = normalizeProfileKey($activeGatewayProfile.get())
+
+  // No known profiles → another profile we can't rule out might own the id.
+  // Skip the probe entirely; there is nothing to gain from a lone unscoped hit.
+  if ($profiles.get().length === 0) {
+    return 'unknown'
+  }
+
   try {
     await getSession(id)
 
     return 'alive'
   } catch (error) {
-    return isNotFoundError(error) ? 'dead' : 'unknown'
+    if (!isNotFoundError(error)) {
+      return 'unknown'
+    }
   }
+
+  const knownProfiles = [...new Set($profiles.get().map(profile => normalizeProfileKey(profile.name)))]
+
+  // Without the profile list we can't rule out another profile — defer rather
+  // than risk pruning a session that lives elsewhere.
+  const otherProfiles = knownProfiles.filter(key => key !== activeKey)
+
+  if (knownProfiles.length === 0) {
+    return 'unknown'
+  }
+
+  for (const profile of otherProfiles) {
+    try {
+      await getSession(id, profile)
+
+      return 'alive'
+    } catch (error) {
+      if (!isNotFoundError(error)) {
+        return 'unknown'
+      }
+    }
+  }
+
+  return 'dead'
 }
 
 /** Stored ids no loaded sidebar row covers — the only ids that can be dead. */
@@ -131,26 +161,10 @@ function collectCandidates(): string[] {
     }
   }
 
-  const knownProfiles = new Set($profiles.get().map(profile => normalizeProfileKey(profile.name)))
-
   return [...candidates].filter(id => {
     const expiresAt = alive.get(id)
 
-    if (expiresAt !== undefined && Date.now() < expiresAt) {
-      return false
-    }
-
-    if (inFlight.has(id)) {
-      return false
-    }
-
-    // A remembered dead verdict is trusted only while the profile inventory
-    // it was measured against is unchanged: a newly known profile could now
-    // own the id, so re-probe once the set grows. (A gateway switch clears
-    // `dead` wholesale in resetDeadSessionPrune.)
-    const measuredOn = dead.get(id)
-
-    return measuredOn === undefined || ![...measuredOn].every(key => knownProfiles.has(key))
+    return !(expiresAt !== undefined && Date.now() < expiresAt) && !inFlight.has(id)
   })
 }
 
@@ -222,7 +236,6 @@ async function sweepOnce(requireLoaded = true): Promise<void> {
       if (verdict === 'alive') {
         alive.set(id, Date.now() + ALIVE_TTL_MS)
       } else if (verdict === 'dead') {
-        dead.set(id, new Set($profiles.get().map(profile => normalizeProfileKey(profile.name))))
         dropDeadId(id)
       }
       // 'unknown' — neither cached nor dropped; a later sweep retries it.

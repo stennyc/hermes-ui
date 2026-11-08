@@ -1,11 +1,9 @@
 import { isMissingRestEndpoint, isUnroutedRestPath } from '@/lib/gateway-rpc'
+import { maybeBackfillLegacySessionOwners } from '@/lib/legacy-session-owner-backfill'
 import { stampRowsWithOwningConnection } from '@/lib/session-owner-stamp'
 import { pageHonorsLatestOrder, recordTranscriptTail } from '@/store/transcript-tail'
-import { lookupSessionOwnerProfile, recordSessionOwners } from '@/store/session-owner-index'
-import { recordTranscriptAlive } from '@/store/transcript-gone'
 import type {
   PaginatedSessions,
-  ProfileInfo,
   SessionInfo,
   SessionMessage,
   SessionMessagesResponse,
@@ -28,10 +26,6 @@ import {
 
 const SESSION_LIST_REQUEST_TIMEOUT_MS = 60_000
 
-/** The REST bridge's session-not-found verdict: a 404 that is a HANDLER verdict
- *  ("Session not found" / not_found), not a route-missing 404 — the same two-part
- *  test `probeStoredSession.recordFailure` uses for its gone/inconclusive ladder,
- *  so the fallback and the resolver agree on what a sweep-wide miss means. */
 function sessionScoped(scope?: ProfileScope): { connectionId?: string; profile?: string } {
   if (scope === undefined || scope === null) {
     return {}
@@ -49,56 +43,6 @@ function sessionScoped(scope?: ProfileScope): { connectionId?: string; profile?:
   }
 
   return scoped
-}
-
-/**
- * P14 (owner ruling 2026-11-07): the read-side ownership gate. Before ANY
- * by-id session read fires, ask the P10 index who owns this id. If the owner
- * is a DIFFERENT profile than the effective request profile (an explicit pin
- * from the caller, else the active gateway profile) → the read is cross-profile
- * by construction → DON'T send it. Fail-closed: reject a 404
- * SESSION_NOT_FOUND error so callers' `.catch` treats it as a miss (A path),
- * zero HTTP, zero cascade. An explicit `profile` pin ALWAYS wins (a deliberate
- * profile read is legitimate, not a sweep). Index miss (cold index) → no gate
- * → the read proceeds as today (no mis-kill of a fresh session).
- */
-function readSideGateError(id: string, profile?: ProfileScope): Promise<never | null> {
-  return (async () => {
-    if (profile != null && typeof profile === 'string' && profile.trim() !== '') {
-      // An explicit profile pin is a deliberate cross-profile read — legitimate.
-      return null
-    }
-    const ownerProfile = lookupSessionOwnerProfile(id)
-    if (!ownerProfile) {
-      // Cold index / not yet listed → no ownership evidence → proceed.
-      return null
-    }
-    const effectiveProfile = profile != null && typeof profile === 'object' ? profile.profile : getApiRequestProfile()
-    if (!effectiveProfile) {
-      // No active profile to compare against (e.g. tests, cold boot) → proceed.
-      return null
-    }
-    // P14 cycle guard: `normalizeProfileKey` lives in `@/store/profile`, whose
-    // top-level `@/hermes` import barrel re-exports `./api/sessions` — a static
-    // import here closes the module cycle and detonates the `setApiRequestProfile`
-    // subscribe callback during vitest's strict ESM init. `normalizeProfileKey`
-    // is a pure function (no side effects, no @/hermes dependency), so a lazy
-    // import is safe and matches the P10 `defaultOwnerIndexBackfill` pattern.
-    const { normalizeProfileKey } = await import('@/store/profile')
-    if (normalizeProfileKey(ownerProfile) === normalizeProfileKey(effectiveProfile)) {
-      // Same profile → normal read.
-      return null
-    }
-    // Cross-profile by-id read → refuse before any HTTP. Callers' .catch already
-    // treats a 404 "Session not found" as a miss, so the verdict match (P11's
-    // 404-discriminator) sees it as a clean miss and the 5-fade retry loop
-    // short-circuits on the first skip.
-    const err = Object.assign(new Error(`404: Session not found: ${id}`), {
-      status: 404,
-      code: 'SESSION_NOT_FOUND'
-    })
-    return Promise.reject(err)
-  })()
 }
 
 /**
@@ -128,6 +72,12 @@ function sessionScopeQuery(scope?: ProfileScope): string {
  * write shape for connection_id on backend-returned rows.
  */
 function stampActiveConnectionOwner(sessions: SessionInfo[]): SessionInfo[] {
+  // Durable half of the same ownership contract (#94724): enumeration under
+  // registry topology triggers the one-shot server-side owner backfill for
+  // the serving store when its owner is a single match. Fire-and-forget;
+  // idempotent server-side; never blocks or fails the list that triggered it.
+  maybeBackfillLegacySessionOwners()
+
   return stampRowsWithOwningConnection(sessions, getApiRequestConnection())
 }
 
@@ -208,20 +158,9 @@ export async function listAllProfileSessions(
     timeoutMs: SESSION_LIST_REQUEST_TIMEOUT_MS
   })
 
-  // P10: every successful unified page names the owner of every row it
-  // returned — fold that into the id→profile index so a cache-missed by-id
-  // read resolves without probing profiles one by one (the cascade P8 killed
-  // had to come back as a sweep, so it is replaced by a lookup instead).
-  const stamped = stampActiveConnectionOwner(result.sessions)
-
-  recordSessionOwners(stamped)
-  // P12: a page that still lists an id retires its gone verdict (the
-  // session came back on some profile — re-reads resume on the next tick).
-  recordTranscriptAlive(stamped.map(row => row.id))
-
   return {
     ...result,
-    sessions: pageWindow(stamped, limit),
+    sessions: pageWindow(stampActiveConnectionOwner(result.sessions), limit),
     offset: Math.max(0, offset)
   }
 }
@@ -294,18 +233,19 @@ export interface SidebarSessionsRequest {
 // The batched /sidebar endpoint shipped later than the per-slice route, so a
 // newer desktop can meet an older backend that 404s it ("No such API
 // endpoint"). Endpoint-missing is a capability signal, not a transient
-// failure: remember it (per renderer lifetime — a runtime home change reloads
-// the window and re-probes) and serve every subsequent refresh straight from
-// the three proven per-slice calls instead of re-probing a known-dead route
-// once per turn/broadcast.
-let sidebarBatchEndpointMissing = false
+// failure: remember it and serve every subsequent refresh straight from the
+// three proven per-slice calls instead of re-probing a known-dead route once
+// per turn/broadcast. It is a fact about ONE backend, so it is keyed by the
+// connection the request rode: a gateway pick re-scopes requests in place
+// (no reload, no list wipe), and the next gateway may well have the route.
+// Keyed at request time, a late 404 from the gateway just left still lands on
+// that gateway, not on the one now in front.
+const sidebarBatchEndpointMissing = new Set<string>()
 
-// Capability flags are per-backend facts. A hard re-home reloads the window
-// (module state resets naturally), but a soft gateway switch re-dials in
-// place — the next backend may well have the batched route, so the switch
-// paths call this to re-probe rather than leak the old backend's capability.
+// A Settings apply can re-point a connection id at a different backend, so it
+// forgets every remembered capability and re-probes.
 export function resetSidebarBatchCapability() {
-  sidebarBatchEndpointMissing = false
+  sidebarBatchEndpointMissing.clear()
 }
 
 // Compatibility fallback: reassemble the three sidebar slices from the
@@ -371,7 +311,9 @@ export function scanSessionPullRequests(
 }
 
 export async function listSidebarSessions(req: SidebarSessionsRequest): Promise<SidebarSessionsResponse> {
-  if (sidebarBatchEndpointMissing) {
+  const capabilityKey = getApiRequestConnection() ?? ''
+
+  if (sidebarBatchEndpointMissing.has(capabilityKey)) {
     return listSidebarSessionsLegacy(req)
   }
 
@@ -406,34 +348,25 @@ export async function listSidebarSessions(req: SidebarSessionsRequest): Promise<
     }
 
     // Older backend without the batched route (desktop/runtime version skew).
-    sidebarBatchEndpointMissing = true
+    sidebarBatchEndpointMissing.add(capabilityKey)
 
     return listSidebarSessionsLegacy(req)
   }
 
-  const recentsStamped = stampActiveConnectionOwner(result.recents?.sessions ?? [])
-  const cronStamped = stampActiveConnectionOwner(result.cron?.sessions ?? [])
-  const messagingStamped = stampActiveConnectionOwner(result.messaging?.sessions ?? [])
-
-  // P10: the sidebar batch is the index's main feeder — one unified page per
-  // refresh already carries every row's owning profile tag.
-  recordSessionOwners([...recentsStamped, ...cronStamped, ...messagingStamped])
-  recordTranscriptAlive([...recentsStamped, ...cronStamped, ...messagingStamped].map(row => row.id))
-
   return {
     recents: {
       ...result.recents,
-      sessions: recentsStamped,
+      sessions: stampActiveConnectionOwner(result.recents?.sessions ?? []),
       ...(result.errors?.length ? { errors: result.errors } : {})
     },
     cron: {
       ...result.cron,
-      sessions: cronStamped,
+      sessions: stampActiveConnectionOwner(result.cron?.sessions ?? []),
       ...(result.errors?.length ? { errors: result.errors } : {})
     },
     messaging: {
       ...result.messaging,
-      sessions: messagingStamped,
+      sessions: stampActiveConnectionOwner(result.messaging?.sessions ?? []),
       ...(result.errors?.length ? { errors: result.errors } : {})
     },
     errors: result.errors,
@@ -528,53 +461,28 @@ function mutateSessionHttp<T>(id: string, method: 'PATCH' | 'DELETE', payload: R
   // the registry's 'local' source would pin a remote primary's edits to this machine.
   const scope = { connectionId: getApiRequestConnection(), ...sessionScoped(profile) }
   const path = `/api/sessions/${encodeURIComponent(id)}`
+  const query = new URLSearchParams(scope.profile ? { profile: scope.profile } : {})
+  const suffix = query.size ? `?${query}` : ''
+  const key = JSON.stringify([scope, id, method, payload])
 
-  const resolveScope = (probeProfile: ProfileScope) =>
-    probeProfile === profile
-      ? scope
-      : { connectionId: getApiRequestConnection(), ...sessionScoped(probeProfile) }
+  const send = (identity: Partial<SessionMutationIdentity>) => {
+    if (method === 'DELETE') {
+      const params = new URLSearchParams(query)
 
-  const attempt = (probeProfile: ProfileScope): Promise<T> => {
-    const target = resolveScope(probeProfile)
-    const query = new URLSearchParams(target.profile ? { profile: target.profile } : {})
-    const suffix = query.size ? `?${query}` : ''
-    const key = JSON.stringify([target, id, method, payload])
+      for (const [name, value] of Object.entries(identity)) { params.set(name, String(value)) }
 
-    const send = (identity: Partial<SessionMutationIdentity>) => {
-      if (method === 'DELETE') {
-        const params = new URLSearchParams(query)
-
-        for (const [name, value] of Object.entries(identity)) { params.set(name, String(value)) }
-
-        return hermesApi<T>({ ...target, path: params.size ? `${path}?${params}` : path, method })
-      }
-
-      return hermesApi<T>({ ...target, path, method,
-        body: { ...payload, ...identity, ...(target.profile ? { profile: target.profile } : {}) } })
+      return hermesApi<T>({ ...scope, path: params.size ? `${path}?${params}` : path, method })
     }
 
-    return mutateSessionFenced(key, () => hermesApi<SessionMutationSnapshot>({ ...target, path: `${path}/mutation-snapshot${suffix}` }), send)
+    return hermesApi<T>({ ...scope, path, method,
+      body: { ...payload, ...identity, ...(scope.profile ? { profile: scope.profile } : {}) } })
   }
 
-  // An explicitly pinned write (a caller-named profile, or an ambient request
-  // profile) is fail-closed: that profile was chosen on purpose, and a 404
-  // means the row is not there.
-  //
-  // P6 (owner ruling 2026-11-05): NO cross-profile sweep on an ambient 404 —
-  // the same reasoning as the read path above. A write issued unpinned
-  // because the caller has no known owner propagates its 404 untouched; a
-  // write that knows its owner is already pinned. Sweeping every listed
-  // profile turned one ambient 404 into an N-way 404 cascade (the 9200
-  // repro).
-  if (scope.profile || getApiRequestProfile()) {
-    return attempt(profile)
-  }
-
-  return attempt(profile)
+  return mutateSessionFenced(key, () => hermesApi<SessionMutationSnapshot>({ ...scope, path: `${path}/mutation-snapshot${suffix}` }), send)
 }
 
 export function setSessionArchived(id: string, archived: boolean, profile?: string | null): Promise<{ ok: boolean }> {
-  return mutateSessionHttp(id, 'PATCH', { archived }, sessionWriteProfile(profile))
+  return mutateSessionHttp(id, 'PATCH', { archived, ...(archived ? { pinned: false } : {}) }, sessionWriteProfile(profile))
 }
 
 export function setSessionPinnedRemote(id: string, pinned: boolean, profile?: string | null): Promise<{ ok: boolean }> {
@@ -603,41 +511,16 @@ export function searchSessions(query: string, profile?: null | string): Promise<
 // the given `profile`). The backend resolves exact ids and unique prefixes and
 // 404s when the id isn't on that profile — so a cheap by-id lookup replaces the
 // cross-profile list scan when locating an unknown id's owner.
-//
-// A UNPINNED read that 404s falls back to the owning profile (the row may
-// live on another profile's state.db — the 9200 `profiles/coder` repro).
-export function getSession(id: string, profile?: ProfileScope, options: { passive?: boolean } = {}): Promise<SessionInfo> {
-  // P14: refuse a cross-profile by-id read BEFORE any HTTP (owner ruling 2026-11-07).
-  return readSideGateError(id, profile).then(async gated => {
-    if (gated) {
-      return gated
-    }
-    // Pin the read to the session's OWNER connection (#125372): the ambient dial
-    // 404s on the wrong backend whenever two connections expose a same-named
-    // profile.
-    const scope = { ...sessionScoped(profile), ...sessionReadOwnerPin(id, profile) }
-    const suffix = scope.profile ? `?profile=${encodeURIComponent(scope.profile)}` : ''
+export function getSession(id: string, profile?: ProfileScope): Promise<SessionInfo> {
+  // Pin the read to the session's OWNER connection (#125372): the ambient dial
+  // 404s on the wrong backend whenever two connections expose a same-named
+  // profile.
+  const scope = { ...sessionScoped(profile), ...sessionReadOwnerPin(id, profile) }
+  const suffix = scope.profile ? `?profile=${encodeURIComponent(scope.profile)}` : ''
 
-    // P6 (owner ruling 2026-11-05): the CALLER knows the session's owning
-    // profile (sidebar rows carry it; the restore chain pins the active
-    // profile) — pass it here. There is NO cross-profile sweep: default and
-    // any other profile are independent, and reading one through the other is
-    // how the 404 cascades started. An unpinned read propagates its 404
-    // untouched.
-    return hermesApi<SessionInfo>({
-      ...scope,
-      path: `/api/sessions/${encodeURIComponent(id)}${suffix}`,
-      ...(options.passive ? { passive: true } : {})
-    }).catch((error: unknown) => {
-      // A passive by-id miss degrades to a 204 in the web bridge (no red 4xx
-      // row). Resolve it back to the same session-not-found error a caller's
-      // verdict match expects.
-      if (error && typeof error === 'object' && 'error' in error && error.error instanceof Error) {
-        throw error.error
-      }
-
-      throw error
-    })
+  return hermesApi<SessionInfo>({
+    ...scope,
+    path: `/api/sessions/${encodeURIComponent(id)}${suffix}`
   })
 }
 
@@ -651,48 +534,37 @@ export function getSessionMessages(
   page: { limit?: number; offset?: number; order?: 'latest' | 'oldest'; includeCompacted?: boolean } = {},
   options: { passive?: boolean } = {}
 ): Promise<SessionMessagesResponse> {
-  // P14: refuse a cross-profile by-id transcript read BEFORE any HTTP
-  // (owner ruling 2026-11-07). The 5-fade `/messages?limit=120` source is
-  // exactly this path — getLatestSessionMessages funnels here, so gating the
-  // single source (this function) covers both the limit=120 tick AND the
-  // include_compacted=true deep-read.
-  return readSideGateError(id, profile).then(async gated => {
-    if (gated) {
-      return gated
-    }
+  const query = new URLSearchParams()
 
-    const query = new URLSearchParams()
+  // Owner connection pin (#125372) — see getSession.
+  const sessionScope = { ...sessionScoped(profile), ...sessionReadOwnerPin(id, profile) }
 
-    // Owner connection pin (#125372) — see getSession.
-    const sessionScope = { ...sessionScoped(profile), ...sessionReadOwnerPin(id, profile) }
+  if (sessionScope.profile) {
+    query.set('profile', sessionScope.profile)
+  }
 
-    if (sessionScope.profile) {
-      query.set('profile', sessionScope.profile)
-    }
+  if (page.limit !== undefined) {
+    query.set('limit', String(page.limit))
+  }
 
-    if (page.limit !== undefined) {
-      query.set('limit', String(page.limit))
-    }
+  if (page.offset !== undefined) {
+    query.set('offset', String(page.offset))
+  }
 
-    if (page.offset !== undefined) {
-      query.set('offset', String(page.offset))
-    }
+  if (page.order) {
+    query.set('order', page.order)
+  }
 
-    if (page.order) {
-      query.set('order', page.order)
-    }
+  if (page.includeCompacted !== undefined) {
+    query.set('include_compacted', String(page.includeCompacted))
+  }
 
-    if (page.includeCompacted !== undefined) {
-      query.set('include_compacted', String(page.includeCompacted))
-    }
+  const suffix = query.size ? `?${query.toString()}` : ''
 
-    const suffix = query.size ? `?${query.toString()}` : ''
-
-    return hermesApi<SessionMessagesResponse>({
-      ...sessionScope,
-      path: `/api/sessions/${encodeURIComponent(id)}/messages${suffix}`,
-      ...(options.passive ? { passive: true } : {})
-    })
+  return hermesApi<SessionMessagesResponse>({
+    ...sessionScope,
+    path: `/api/sessions/${encodeURIComponent(id)}/messages${suffix}`,
+    ...(options.passive ? { passive: true } : {})
   })
 }
 
@@ -796,19 +668,40 @@ async function completeTranscriptForOrderlessBackend(
 }
 
 /**
- * READ-ONLY stored-transcript lookup on the CURRENT profile only. No
- * cross-backend, no cross-profile fallback: default and every other profile
- * are independent profile DBs, and reading one session id through another's
- * is how the 9200 404 cascades started (owner ruling 2026-11-05). A miss on
- * the current profile's store is a plain null — callers already have the
- * `stored transcript unavailable` branch.
+ * READ-ONLY stored-transcript lookup that never routes a live session
+ * (#94724 no-owner recovery). Tries the ambient/primary store first, then
+ * probes every registered NON-local connection by id — a REST read of a
+ * backend's own state.db is side-effect free (a miss is a plain 404, no
+ * session is minted or resumed anywhere), so probing across backends is safe
+ * where live routing would be a guess. Returns null when no reachable
+ * backend holds the transcript.
  */
 export async function fetchStoredTranscriptAcrossBackends(id: string): Promise<SessionMessagesResponse | null> {
   try {
     return await getLatestSessionMessages(id)
   } catch {
-    return null
+    // Not on the ambient store — probe the registered backends below.
   }
+
+  const { $connectionsRegistry } = await import('@/store/connection-registry-state')
+
+  const connections = ($connectionsRegistry.get()?.connections ?? []) as Array<{ id?: string }>
+
+  for (const connection of connections) {
+    const connectionId = connection.id?.trim()
+
+    if (!connectionId || connectionId === 'local' || connectionId === getApiRequestConnection()) {
+      continue
+    }
+
+    try {
+      return await getLatestSessionMessages(id, { connectionId, profile: 'default' })
+    } catch {
+      // Not on this backend (or it is unreachable); try the next.
+    }
+  }
+
+  return null
 }
 
 /**

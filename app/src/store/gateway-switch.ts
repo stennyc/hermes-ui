@@ -8,7 +8,6 @@ import { invalidateCronJobsRequests, setCronJobs } from '@/store/cron'
 import { resetDeadSessionPrune } from '@/store/dead-session-prune'
 import { resetSessionsLimit } from '@/store/layout'
 import { resetLiveSync } from '@/store/live-sync'
-import { resetSessionOwnerIndex } from '@/store/session-owner-index'
 import { invalidateProfileListFetches } from '@/store/profile'
 import { exitProjectScope } from '@/store/project-scope'
 import { clearLiveReactionOverlays } from '@/store/reactions-local'
@@ -39,7 +38,6 @@ import { reloadOpenStarmapGraph, resetStarmapGraph } from '@/store/starmap'
 import { clearAllSessionTodos } from '@/store/todos'
 import { clearTranscriptTailPaging } from '@/store/transcript-tail'
 import { clearTranscriptTails } from '@/store/transcript-tail-cache'
-import { resetTranscriptGone } from '@/store/transcript-gone'
 
 // True while a Settings → Gateway connection-mode apply is mid-flight (wipe →
 // re-dial, use-gateway-boot softSwitch). Picking a registered gateway in
@@ -214,7 +212,6 @@ export function wipeSessionListsForGatewaySwitch(): void {
   // The P10 owner index is a verdict about the OUTGOING store's sessions:
   // its "confirmed absent" stamps would wrongly gate the new backend's
   // backfills for 30 s. Wipe it with the other per-backend caches.
-  resetSessionOwnerIndex()
   // Strand any in-flight /api/profiles fetch from the PREVIOUS backend. The
   // rail's $profiles cache is deliberately NOT wiped (an empty list flickers
   // the rail away), but a late response from the old backend must not
@@ -305,7 +302,6 @@ export function wipeSessionListsForGatewaySwitch(): void {
   clearTranscriptTailPaging()
   // Same per-backend rule for the P12 gone set: a "404 on the old backend's
   // profile" verdict must not skip the re-reads on the new one.
-  resetTranscriptGone()
 
   // Narrowed: account/marketplace/onboarding caches are global, not gateway-
   // scoped, so a mode swap must not refetch them.
