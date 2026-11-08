@@ -141,6 +141,15 @@ function leaveRowTextFieldToBrowser(event: MouseEvent, element: Element | null) 
   }
 }
 
+/** Web host: on the row/menu-trigger path the app never opens a menu — the
+ * browser's native one would open instead. Cancel it so no position leaks a
+ * native menu (the KB recipe's "无菜单的位置右键完全无反应"). */
+function suppressNativeContextMenu(event: MouseEvent): void {
+  if (hostHas('browserContextMenu')) {
+    event.preventDefault()
+  }
+}
+
 function isLoopbackUrl(url: string): boolean {
   try {
     return LOOPBACK_HOST_RE.test(new URL(url).hostname)
@@ -694,9 +703,7 @@ export function AppContextMenu() {
         // A text field in one (the Files tree's inline rename) still keeps the browser's own menu.
         leaveRowTextFieldToBrowser(event, element)
         // Web host: suppress the native menu when no text-field handler claimed the gesture.
-        if (hostHas('browserContextMenu')) {
-          event.preventDefault()
-        }
+        suppressNativeContextMenu(event)
 
         return
       }

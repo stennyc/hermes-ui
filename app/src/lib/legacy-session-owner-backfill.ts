@@ -27,7 +27,7 @@
  * will keep refusing.
  */
 import { getApiRequestConnection, hermesApi } from '@/api/client'
-import { isMissingRestEndpoint, isOfflineMaintenance } from '@/lib/gateway-rpc'
+import { isHttpConflict, isMissingRestEndpoint, isOfflineMaintenance } from '@/lib/gateway-rpc'
 import { resolveLegacyOwnerBackfillScope } from '@/lib/session-owner-stamp'
 import { $connectionsRegistry, hasRegistryTopology } from '@/store/connection-registry-state'
 
@@ -84,10 +84,14 @@ export function maybeBackfillLegacySessionOwners(): void {
       }
     })
     .catch(error => {
-      // Terminal for this scope: version skew (no endpoint) or the owning
-      // gateway's 409 maintenance refusal. Keep the scope marked so we don't
-      // re-probe a route that will answer the same way every refresh.
-      if (isMissingRestEndpoint(error) || isOfflineMaintenance(error)) {
+      // Terminal for this scope: version skew (no endpoint), the owning
+      // gateway's 409 maintenance refusal (message-form `isOfflineMaintenance`
+      // or status-field `isHttpConflict` — the web/Capacitor REST bridge sets
+      // `error.status = 409` but its message shape is `${status}: ${text}`
+      // which `isOfflineMaintenance`'s anchored regex does not catch). Keep
+      // the scope marked so we don't re-probe a route that will answer the
+      // same way every refresh.
+      if (isMissingRestEndpoint(error) || isOfflineMaintenance(error) || isHttpConflict(error)) {
         return
       }
 
