@@ -14,6 +14,7 @@ import { pathFromHermesDeepLink, resolveHermesOpenPath } from '@/lib/hermes-open
 import { storedSessionIdForNotification } from '@/lib/session-ids'
 import { announceNewSessionDraftKey } from '@/store/composer'
 import { recordAction } from '@/store/desktop-metrics'
+import { onKeptRouteOpened } from '@/store/gateway-kept-routes'
 import { requestMcpInstallFromDeepLink } from '@/store/mcp-deeplink-install'
 import { startMcpHealthChecker, stopMcpHealthChecker } from '@/store/mcp-health'
 import {
@@ -49,6 +50,9 @@ import { requestComposerFocus, requestComposerInsert } from '../../chat/composer
 import { appViewForPath, isOverlayView, NEW_CHAT_ROUTE, routeSessionId, sessionRoute } from '../../routes'
 
 import { resolveRememberedSessionId } from './remembered-session'
+
+// Trailing window that folds a burst of kept-route opens into one list refresh.
+const KEPT_ROUTE_REFRESH_COALESCE_MS = 400
 
 type RememberedSession = Pick<SessionInfo, '_lineage_root_id' | 'id' | 'parent_session_id' | 'profile' | 'source'>
 
@@ -250,18 +254,9 @@ export function useDesktopIntegrations({
           // Unlisted (or a delegate row that reached a list slice): resolve
           // the id directly — the by-id endpoint serves delegate children the
           // list omits. A delegate child repairs to its parent, an orphan or
-          // foreign-profile id clears. An authoritative "no such session on
-          // this profile" (the bridge's 404 error, e.g. a remembered id owned
-          // by ANOTHER profile — default and coder are independent stores, and
-          // reading one through the other is exactly the 404 the owner ruling
-          // forbids) clears the value here so it never re-fires on the next
-          // launch; a failed fetch keeps the remembered value for next launch
-          // instead of discarding it.
-          void resolveRememberedSessionId(
-            last,
-            id => getSession(id, activeProfile),
-            error => error instanceof Error && error.message.includes('404')
-          )
+          // foreign-profile id clears, and a fetch failure keeps the
+          // remembered value for the next launch instead of discarding it.
+          void resolveRememberedSessionId(last, getSession)
             .then(remembered => {
               if (!remembered || !sessionBelongsToProfile(sessions, remembered, activeProfile)) {
                 setRememberedSessionId(null, activeProfile)
@@ -569,5 +564,22 @@ export function useDesktopIntegrations({
     }
 
     return onSessionsChanged(() => void refreshSessions())
+  }, [refreshSessions])
+
+  // A gateway that connects after the list was drawn adds its rows to it.
+  // Kept-route opens (launch dials and reconnects alike) share one trailing
+  // timer, so opens less than KEPT_ROUTE_REFRESH_COALESCE_MS apart pull once.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    const off = onKeptRouteOpened(() => {
+      clearTimeout(timer)
+      timer = setTimeout(() => void refreshSessions(), KEPT_ROUTE_REFRESH_COALESCE_MS)
+    })
+
+    return () => {
+      off()
+      clearTimeout(timer)
+    }
   }, [refreshSessions])
 }

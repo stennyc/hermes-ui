@@ -27,6 +27,70 @@ function parseSvgLength(raw: string | null): number | null {
   return Number.isFinite(value) ? value : null
 }
 
+export function xmlWellFormedSvg(svg: string): string {
+  const el = new DOMParser().parseFromString(svg, 'text/html').querySelector('svg')
+
+  if (!el) {
+    return svg
+  }
+
+  // The HTML parser keeps a label's `xmlns="…/xhtml"` as a plain attribute. The
+  // serializer declares that namespace itself, and a spec-conformant one (jsdom)
+  // also writes the plain attribute — a duplicate `xmlns`, malformed again.
+  for (const node of el.querySelectorAll('[xmlns]')) {
+    node.removeAttribute('xmlns')
+  }
+
+  return new XMLSerializer().serializeToString(el)
+}
+
+
+export function normalizeSvgSize(svg: string): string {
+  const el = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement
+
+  if (el.tagName !== 'svg') {
+    return svg
+  }
+
+  const width = el.getAttribute('width')
+  const height = el.getAttribute('height')
+  const widthPct = isPercentLength(width)
+  const heightPct = isPercentLength(height)
+
+  if (!widthPct && !heightPct) {
+    return svg
+  }
+
+  // Mermaid pins the intrinsic width with an inline max-width in pixels. An
+  // inline style beats the container's width caps (max-w-full and friends),
+  // so a wide diagram renders at full intrinsic width in the inline preview
+  // instead of shrinking to the pane. Relative values stay untouched.
+  const maxWidth = el.style.getPropertyValue('max-width')
+
+  if (maxWidth && !isPercentLength(maxWidth) && !maxWidth.trim().endsWith('vw')) {
+    el.style.setProperty('max-width', '100%')
+  }
+
+  const box = viewBoxSize(el)
+
+  if (!box) {
+    return svg
+  }
+
+  if (widthPct) {
+    el.setAttribute('width', String(box.width))
+  }
+
+  // Mermaid usually omits height. Fill it from the viewBox so the overlay has
+  // both intrinsic dimensions; don't overwrite an explicit pixel height.
+  if (heightPct || (widthPct && !height)) {
+    el.setAttribute('height', String(box.height))
+  }
+
+  return new XMLSerializer().serializeToString(el)
+}
+
+
 export function svgSize(svg: string): { height: number; width: number } {
   const el = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement
   const width = parseSvgLength(el.getAttribute('width'))

@@ -63,7 +63,7 @@ afterEach(() => {
 })
 
 describe('__runDeadSessionPrunePass', () => {
-  it('unpins a pin whose session 404s on the current profile (P9: no cross-profile probe)', async () => {
+  it('unpins a pin whose session 404s on every profile', async () => {
     $sessions.set([row('unrelated')])
     $pinnedSessionIds.set(['dead-pin'])
     getSessionMock.mockRejectedValue(notFound())
@@ -153,17 +153,16 @@ describe('__runDeadSessionPrunePass', () => {
     expect($pinnedSessionIds.get()).toEqual(['covered', 'root-covered'])
   })
 
-  it('prunes even when the profile list is not loaded yet (P9: verdict is profile-independent)', async () => {
+  it('defers when the profile list is not loaded yet', async () => {
     $sessions.set([row('unrelated')])
     $profiles.set([])
     $pinnedSessionIds.set(['mystery-pin'])
-    getSessionMock.mockRejectedValue(notFound())
+    getSessionMock.mockRejectedValue(new Error('gateway restarting'))
 
     await __runDeadSessionPrunePass()
 
-    // P9: liveness is judged on the current profile alone; an ambient 404 is a
-    // dead verdict whether or not the profile inventory has loaded.
-    expect($pinnedSessionIds.get()).toEqual([])
+    // P9: a non-404 failure is `unknown`, never a dead verdict — keep the pin.
+    expect($pinnedSessionIds.get()).toEqual(['mystery-pin'])
   })
 
   it('prunes on a genuinely empty backend (all sessions purged)', async () => {
@@ -187,8 +186,7 @@ describe('__runDeadSessionPrunePass', () => {
     try {
       $sessions.set([row('unrelated')])
       $pinnedSessionIds.set(['ttl-pin'])
-      // P9: ambient read resolves on the current profile -> alive verdict.
-      getSessionMock.mockResolvedValue(row('ttl-pin', { profile: 'default' }))
+      getSessionMock.mockResolvedValue(row('ttl-pin'))
 
       // Alive on the current profile — cached, not pruned, not re-probed.
       await __runDeadSessionPrunePass()
@@ -198,7 +196,7 @@ describe('__runDeadSessionPrunePass', () => {
       expect(getSessionMock).not.toHaveBeenCalled()
 
       // Session deleted mid-session; after the TTL the next pass re-probes
-      // and a definitive 404 on the current profile prunes.
+      // and a definitive 404 prunes.
       vi.setSystemTime(Date.now() + 10 * 60_000 + 1_000)
       getSessionMock.mockRejectedValue(notFound())
       await __runDeadSessionPrunePass()

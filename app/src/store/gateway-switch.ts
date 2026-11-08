@@ -1,14 +1,14 @@
 import { atom } from 'nanostores'
 
 import { resetLiveRuntimeTracking } from '@/app/contrib/hooks/use-background-sync'
-import { resetSidebarBatchCapability, resetMutationSnapshotRouteCapability } from '@/hermes'
+import { resetMutationSnapshotRouteCapability, resetSidebarBatchCapability } from '@/hermes'
 import { invalidateProfileScopedQueries } from '@/lib/query-client'
 import { clearArtifactRegistry } from '@/store/artifacts'
 import { invalidateCronJobsRequests, setCronJobs } from '@/store/cron'
 import { resetDeadSessionPrune } from '@/store/dead-session-prune'
 import { resetSessionsLimit } from '@/store/layout'
 import { resetLiveSync } from '@/store/live-sync'
-import { resetTranscriptGone } from '@/store/transcript-gone'
+import { resetSessionOwnerIndex } from '@/store/session-owner-index'
 import { invalidateProfileListFetches } from '@/store/profile'
 import { exitProjectScope } from '@/store/project-scope'
 import { clearLiveReactionOverlays } from '@/store/reactions-local'
@@ -25,6 +25,7 @@ import {
   setMessagingSessions,
   setMessagingTruncated,
   setSelectedStoredSessionId,
+  setSessionProfilesFailed,
   setSessionProfilesTruncated,
   setSessionProfilesUsage,
   setSessions,
@@ -32,16 +33,18 @@ import {
   setSessionsLoading
 } from '@/store/session'
 import { clearAllSessionControl } from '@/store/session-control'
-import { resetSessionOwnerIndex } from '@/store/session-owner-index'
 import { resetSessionPinMirror } from '@/store/session-pin-sync'
 import { clearAllSessionStates } from '@/store/session-states'
+import { reloadOpenStarmapGraph, resetStarmapGraph } from '@/store/starmap'
 import { clearAllSessionTodos } from '@/store/todos'
 import { clearTranscriptTailPaging } from '@/store/transcript-tail'
 import { clearTranscriptTails } from '@/store/transcript-tail-cache'
+import { resetTranscriptGone } from '@/store/transcript-gone'
 
-// True while a connection switch is mid-flight — a Settings → Gateway apply
-// (wipe → re-dial, use-gateway-boot softSwitch) or a Sessions-switcher source
-// change (store/connections selectConnection). Lets the boot hook suppress the
+// True while a Settings → Gateway connection-mode apply is mid-flight (wipe →
+// re-dial, use-gateway-boot softSwitch). Picking a registered gateway in
+// Sessions is not a switch: every gateway stays connected and the pick is a
+// live activation (store/connections selectConnection). Lets the boot hook suppress the
 // backend-exit toast, keeps the cold-boot CONNECTING overlay from resurrecting
 // when startHermes re-emits boot progress, and tells the resume path that a
 // "session not found" mid-switch means "retry once things settle", not "gone".
@@ -52,8 +55,10 @@ export const $gatewaySwitching = atom(false)
  * is activated or published: fresh-draft the open transcript, drop the overlay
  * return route, reset the project tree, close terminals — everything bound to
  * the OUTGOING backend that lives outside the session store. Registered by
- * useGatewayBoot (whose host owns those React callbacks) so store-driven
- * switches run the exact same reset as a Settings → Gateway apply.
+ * useGatewayBoot, whose host owns those React callbacks. Only a connection
+ * apply (Settings → Gateway, or a backend recycle) runs it. A gateway pick does
+ * not: selectConnection's beforeActivate does its own narrower draft/project
+ * reset.
  */
 export interface GatewaySwitchLifecycle {
   beforeConnectionSwitch: () => void
@@ -84,14 +89,12 @@ export function registerGatewaySwitchLifecycle(lifecycle: GatewaySwitchLifecycle
 }
 
 /**
- * Commit point of every connection switch: raise the barrier and sever every
- * binding to the outgoing backend in ONE synchronous step. Both switch doors —
- * Settings apply (softSwitch) and the Sessions switcher (selectConnection) —
- * must call this BEFORE the next gateway is activated or its descriptor
- * published. The sidebar door used to activate first and wipe afterwards
- * (across an IPC round-trip), so route/session effects saw the new source while
- * $activeSessionId still named the previous backend's runtime and sent that id
- * to a backend that had never minted it — "session not found" (#93937).
+ * Commit point of a connection-mode apply: raise the barrier and sever every
+ * binding to the outgoing backend in ONE synchronous step, BEFORE the next
+ * gateway is activated or its descriptor published. Activating first and
+ * wiping after (across an IPC round-trip) let route/session effects see the new
+ * source while $activeSessionId still named the previous backend's runtime —
+ * "session not found" (#93937).
  */
 export function beginGatewaySwitch(): GatewaySwitchToken {
   const token = ++latestSwitchToken
@@ -129,6 +132,17 @@ export function beginGatewaySwitch(): GatewaySwitchToken {
 }
 
 /**
+ * A gateway pick made while a Settings apply is mid-flight wins: the apply's
+ * token stops owning any later publication, and its barrier comes down.
+ */
+export function supersedeGatewaySwitch(): void {
+  if ($gatewaySwitching.get()) {
+    latestSwitchToken += 1
+    endGatewaySwitch()
+  }
+}
+
+/**
  * Lower the barrier once the switch that owns it has committed (or failed).
  * Switches overlap — a click can supersede one that is mid-commit — and the
  * barrier belongs to the LATEST one: an older switch ending is a no-op while a
@@ -140,6 +154,9 @@ export function endGatewaySwitch(token?: GatewaySwitchToken): void {
   }
 
   $gatewaySwitching.set(false)
+  // The wipe reset the star map while the outgoing source was still active; requests now route
+  // to whichever source the switch left active, so an open view reloads against it.
+  reloadOpenStarmapGraph()
 }
 
 /**
@@ -194,6 +211,10 @@ export function wipeSessionListsForGatewaySwitch(): void {
   // Same version-skew rule for the session-edit CAS capability: the old
   // backend's "route missing" verdict must not gate the freshly dialed one.
   resetMutationSnapshotRouteCapability()
+  // The P10 owner index is a verdict about the OUTGOING store's sessions:
+  // its "confirmed absent" stamps would wrongly gate the new backend's
+  // backfills for 30 s. Wipe it with the other per-backend caches.
+  resetSessionOwnerIndex()
   // Strand any in-flight /api/profiles fetch from the PREVIOUS backend. The
   // rail's $profiles cache is deliberately NOT wiped (an empty list flickers
   // the rail away), but a late response from the old backend must not
@@ -204,13 +225,6 @@ export function wipeSessionListsForGatewaySwitch(): void {
   // has never seen them, so drop the "already pushed" bookkeeping and let the
   // next reconcile re-assert the whole set against the new backend.
   resetSessionPinMirror()
-  // The P10 owner index is a verdict about the OUTGOING store's sessions:
-  // its "confirmed absent" stamps would wrongly gate the new backend's
-  // backfills for 30 s. Wipe it with the other per-backend caches.
-  resetSessionOwnerIndex()
-  // Same per-backend rule for the P12 gone set: a "404 on the old
-  // backend's profile" verdict must not skip the re-reads on the new one.
-  resetTranscriptGone()
   // Project ids belong to the outgoing backend's projects.db; a scope left
   // entered would root the next draft's cwd in the old source's project.
   exitProjectScope()
@@ -223,8 +237,12 @@ export function wipeSessionListsForGatewaySwitch(): void {
   resetDeadSessionPrune()
   setSessionProfilesTruncated({})
   setSessionProfilesUsage({})
+  setSessionProfilesFailed([])
   setCronSessions([])
   invalidateCronJobsRequests()
+  // The star map is a scan of the outgoing backend's skills and memory; an open view reloads it
+  // when the switch ends (endGatewaySwitch), not here: the outgoing source is still active.
+  resetStarmapGraph()
   setCronJobs([])
   setMessagingSessions([])
   setMessagingListServer(null)
@@ -285,6 +303,9 @@ export function wipeSessionListsForGatewaySwitch(): void {
   // fail the unique-match lookup that shows "Show earlier".
   clearTranscriptTails()
   clearTranscriptTailPaging()
+  // Same per-backend rule for the P12 gone set: a "404 on the old backend's
+  // profile" verdict must not skip the re-reads on the new one.
+  resetTranscriptGone()
 
   // Narrowed: account/marketplace/onboarding caches are global, not gateway-
   // scoped, so a mode swap must not refetch them.

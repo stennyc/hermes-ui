@@ -173,18 +173,6 @@ describe('resolveGatewayWsUrl', () => {
     })
   })
 
-    it('raises a reauth error when the token-mode mint reports needsOauthLogin', async () => {
-      const getGatewayWsUrl = vi.fn().mockResolvedValue({
-        error: '401: session expired',
-        needsOauthLogin: true,
-        ok: false
-      })
-
-      await expect(resolveGatewayWsUrl({ getGatewayWsUrl }, tokenConn)).rejects.toBeInstanceOf(
-        GatewayReauthRequiredError
-      )
-    })
-
   // The Webapp's socket descriptor carries no credential: every dial needs a fresh ticket, so a
   // failed mint is the reason to show, never a fallback to a URL that can only fail later without one.
   describe('Webapp native dial', () => {

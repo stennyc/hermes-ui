@@ -122,3 +122,8 @@ export const brandFor = (name: string): McpBrand | null => {
     null
   )
 }
+
+/** Inline-glyph color for a brand: monochrome marks inherit the surrounding
+ *  text color; branded marks use the brand color. */
+export const brandGlyphStyle = (brand: McpBrand): { color: string } | undefined =>
+  brand.monochrome ? undefined : { color: brand.color }

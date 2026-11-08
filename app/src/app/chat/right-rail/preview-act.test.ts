@@ -1,10 +1,4 @@
-
-// node:util's types shim: isPromise is a thenable check; filter is Array.filter
-// (used only for input-event type lists in drive_preview tests).
-const types = {
-  isPromise: (v: unknown) => v instanceof Promise || (v !== null && typeof v === 'object' && typeof (v as any).then === 'function'),
-  filter: Array.prototype.filter
-}
+import { types } from 'node:util'
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 

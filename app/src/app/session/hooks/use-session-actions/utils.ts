@@ -1,7 +1,8 @@
+
 import { resolveSessionRpcOwner } from '@/app/contrib/wiring-routing'
 import { textWithoutReferenceLines } from '@/components/assistant-ui/reference-kinds'
 import { getSession } from '@/hermes'
-import { sameAttachmentTurn, spliceOlderPreservedRows } from '@/lib/chat-messages'
+import { concatPartsByToolCall, sameAttachmentTurn, spliceOlderPreservedRows } from '@/lib/chat-messages'
 import {
   assistantTextPart,
   type ChatMessage,
@@ -15,15 +16,10 @@ import { embeddedImageUrls, textWithoutEmbeddedImages } from '@/lib/embedded-ima
 import { parseErrorSurface } from '@/lib/error-surface'
 import { isMessagingSource, normalizeSessionSource } from '@/lib/session-source'
 import { isLiveTailReplyId } from '@/lib/spoken-reply'
-import { reconcileApprovalModeForProfile } from '@/store/approval-mode'
 import { requestDesktopOnboardingForCredentialWarning } from '@/store/onboarding'
 import { pendingSnapshotFence, reconcilePendingSubmissions } from '@/store/pending-submissions'
-import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
+import { $activeGatewayProfile, $profiles, normalizeProfileKey } from '@/store/profile'
 import { $projectTree } from '@/store/projects'
-import {
-  defaultOwnerIndexBackfill,
-  ensureSessionOwnerIndexed
-} from '@/store/session-owner-index'
 import {
   $cronSessions,
   $currentCwd,
@@ -74,12 +70,32 @@ import type { SessionCreateResponse, SessionInfo, SessionResumeResult, SessionRu
 import type { ClientSessionState } from '../../../types'
 
 import {
+  committedReplyCovers,
+  isStrictAnswerTextExtension,
+  pageReplyCommittingLiveRow,
+  replyAfterLastTool
+} from './committed-reply'
+import { chatMessageArraysEquivalent, chatMessagesEquivalent } from './message-equivalence'
+import {
+  isLiveTailRow,
+  liveOptimisticUserRun,
+  optimisticUserAlreadyRepresented,
+  refusedPromptCounterparts
+} from './optimistic-user-dedup'
+import {
   acknowledgedTranscriptBoundary,
   conflictingTranscriptIdentity,
-  persistedTurnsEquivalent,
   transcriptRowIds
 } from './pending-turn-identity'
+import { reconcileOwnerApprovalMode } from './runtime-owner'
+import { publishSessionUsage } from './session-usage'
 
+export {
+  chatMessageArraysEquivalent,
+  chatMessagesEquivalent,
+  chatPartsEquivalent,
+  chatReactionsEquivalent
+} from './message-equivalence'
 export { goneSessionVerdict, isSessionGoneError, resolveResumedBusy } from './resume-verdicts'
 
 function withAppendedText(message: ChatMessage, suffix: string): ChatMessage {
@@ -101,54 +117,6 @@ function withAppendedText(message: ChatMessage, suffix: string): ChatMessage {
 /** Reasoning / tool-call parts that the gateway inflight dump cannot express. */
 function hasStructuralParts(message: ChatMessage): boolean {
   return message.parts.some(part => part.type === 'reasoning' || part.type === 'tool-call')
-}
-
-/**
- * A live-turn row — the gateway's text-only `inflight` projection, a
- * still-streaming local bubble, or an interim row sealed inside the running
- * turn — as opposed to a committed transcript row.
- */
-function isLiveTailRow(message: ChatMessage): boolean {
-  return message.pending === true || isLiveTailReplyId(message.id) || message.interim === true
-}
-
-/**
- * True when `next` is a pure forward extension of the previous *answer* text.
- * Empty previous answer never accepts a dump as an extension — that is how the
- * mid-turn inflight flat dump used to sandwich structured rows (#76444).
- */
-export function isStrictAnswerTextExtension(next: string, previous: string): boolean {
-  const n = next.trim()
-  const p = previous.trim()
-
-  if (!p || !n) {
-    return false
-  }
-
-  return n.startsWith(p)
-}
-
-/**
- * Whether a committed bubble already holds the reply a stale live snapshot was
- * streaming. History folds a tool turn's narration, tools and answer into one
- * bubble while the snapshot carries the turn's whole text, so compare the
- * bubble's text with whitespace collapsed. The bubble must end in a reply: a
- * mid-turn commit ends on a tool call and the turn is still running.
- */
-function committedReplyCovers(message: ChatMessage, snapshot: string): boolean {
-  const text = message.parts
-    .flatMap(part => (part.type === 'text' ? [part.text] : []))
-    .join(' ')
-    .replace(/\s+/g, ' ')
-
-  return Boolean(replyAfterLastTool(message).trim()) && isStrictAnswerTextExtension(text, snapshot.replace(/\s+/g, ' '))
-}
-
-/** A folded tool-turn bubble's answer: its text after the last tool call. */
-function replyAfterLastTool(message: ChatMessage): string {
-  const lastTool = message.parts.findLastIndex(part => part.type === 'tool-call')
-
-  return chatMessageText({ ...message, parts: message.parts.slice(lastTool + 1) })
 }
 
 /**
@@ -215,193 +183,6 @@ function preserveStructuralParts(message: ChatMessage, previous: ChatMessage): C
   )
 
   return missing.length ? { ...message, parts: [...missing, ...message.parts] } : message
-}
-
-// Compile-time exhaustiveness guards. If a new field is added to ChatMessage
-// or a new part type appears in the ChatMessagePart union (e.g. @assistant-ui
-// ships one), these fail tsc until someone explicitly classifies it.
-//
-// COMPARED: fields whose change must trigger a re-render (setMessages).
-// Durable identity changes must publish too: view-side refresh reconciliation
-// must see an acknowledgement even when its visible text is unchanged.
-// IGNORED:  fields that are intentionally not compared — display-only metadata
-//           or reference identity the runtime already guarantees.
-//   attachmentRefs — composer-side metadata; already reconciled in reconcileResumeMessages
-//   serverRowSpan — backend rows the folded message covers; the older-page offset
-//                   accounting reads it, the transcript never paints it
-//
-// If your new field affects what the user sees in the transcript, add it to
-// COMPARED. If it's metadata that shouldn't trigger a re-render, add it to
-// IGNORED.
-const _chatMessageFieldsExhaustive: {
-  [K in Exclude<keyof ChatMessage, (typeof COMPARED_FIELDS)[number] | (typeof IGNORED_FIELDS)[number]>]: never
-} = {}
-
-const COMPARED_FIELDS = [
-  'rowId',
-  'persistedTurn',
-  'durableComplete',
-  'recovered',
-  'asyncResult',
-  'asyncResultKind',
-  'id',
-  'role',
-  'pending',
-  'error',
-  // Structured failure layer — drives the error card's title and action row,
-  // so a change (e.g. resume replay attaching the descriptor) must repaint.
-  'errorSurface',
-  'hidden',
-  'branchGroupId',
-  'interim',
-  'interrupted',
-  'reactions',
-  'timestamp',
-  'completedAt',
-  // Turn wall-clock duration — stamps the visible "⏱ 38s" badge, so a change
-  // must re-render (set once at completion; stable afterwards).
-  'durationS'
-] as const
-
-const IGNORED_FIELDS = ['attachmentRefs', 'parts', 'serverRowSpan'] as const
-
-// Compile-time check: every ChatMessagePart discriminant must be handled by
-// chatPartsEquivalent. If @assistant-ui adds a new part type, this fails tsc.
-//   text, reasoning      → compared by .text
-//   tool-call             → compared by toolCallId/toolName + result presence
-//   source, image, file, data, generative-ui, audio, data-* → shallow primitive compare
-const _chatMessagePartTypesExhaustive: {
-  [T in Exclude<ChatMessage['parts'][number]['type'], (typeof HANDLED_PART_TYPES)[number]>]: never
-} = {}
-
-const HANDLED_PART_TYPES = [
-  'text',
-  'reasoning',
-  'tool-call',
-  'source',
-  'image',
-  'file',
-  'data',
-  'generative-ui',
-  'audio'
-] as const
-
-// Structural compare WITHOUT JSON.stringify — the only consumer asks "did
-// the transcript change, should I call setMessages?", so a slightly
-// conservative compare (occasionally false-negative → one extra idempotent
-// setMessages) is safe, but a false-POSITIVE (claiming equal when different)
-// would skip a needed update.
-export function chatPartsEquivalent(aPart: ChatMessage['parts'][number], bPart: ChatMessage['parts'][number]): boolean {
-  // Reference equality fast-path
-  if (aPart === bPart) {
-    return true
-  }
-
-  if (aPart.type !== bPart.type) {
-    return false
-  }
-
-  if (aPart.timestamp !== bPart.timestamp || aPart.completedAt !== bPart.completedAt) {
-    return false
-  }
-
-  if (aPart.type === 'text' || aPart.type === 'reasoning') {
-    if (aPart.sourceRowId !== bPart.sourceRowId) {
-      return false
-    }
-
-    return (aPart as { text: string }).text === (bPart as { text: string }).text
-  }
-
-  if (aPart.type === 'tool-call') {
-    const aCall = aPart as { toolCallId?: string; toolName?: string; result?: unknown }
-    const bCall = bPart as { toolCallId?: string; toolName?: string; result?: unknown }
-
-    if (aCall.toolCallId !== bCall.toolCallId || aCall.toolName !== bCall.toolName) {
-      return false
-    }
-
-    // Compare whether result is present (undefined on both or defined on both)
-    const aHasResult = aCall.result !== undefined
-    const bHasResult = bCall.result !== undefined
-
-    return aHasResult === bHasResult
-  }
-
-  // For all other handled part types (source, image, file, data, generative-ui,
-  // audio, data-*), fall back to shallow primitive-key comparison — conservative:
-  // if we're not sure, claim not-equal (one extra setMessages is harmless, but
-  // skipping an update would break the UI).
-  // SAFETY: both parts already narrowed by `type` to flat primitive part kinds;
-  // the cast only exposes their keys for comparison, never reinterprets them.
-  const aPrimitive = aPart as unknown as Record<string, unknown>
-  // SAFETY: same narrowing as above; key comparison only.
-  const bPrimitive = bPart as unknown as Record<string, unknown>
-  const aKeys = Object.keys(aPrimitive).filter(k => typeof aPrimitive[k] !== 'object' || aPrimitive[k] === null)
-  const bKeys = Object.keys(bPrimitive).filter(k => typeof bPrimitive[k] !== 'object' || bPrimitive[k] === null)
-
-  if (aKeys.length !== bKeys.length) {
-    return false
-  }
-
-  return aKeys.every(k => aPrimitive[k] === bPrimitive[k])
-}
-
-export function chatReactionsEquivalent(a: ChatMessage['reactions'], b: ChatMessage['reactions']): boolean {
-  const aList = a ?? []
-  const bList = b ?? []
-
-  if (aList === bList) {
-    return true
-  }
-
-  return (
-    aList.length === bList.length &&
-    aList.every((reaction, index) => reaction.emoji === bList[index].emoji && reaction.author === bList[index].author)
-  )
-}
-
-export function chatMessagesEquivalent(a: ChatMessage, b: ChatMessage): boolean {
-  if (
-    a.id !== b.id ||
-    a.rowId !== b.rowId ||
-    !persistedTurnsEquivalent(a.persistedTurn, b.persistedTurn) ||
-    a.role !== b.role ||
-    a.durableComplete !== b.durableComplete ||
-    a.recovered !== b.recovered ||
-    a.pending !== b.pending ||
-    a.error !== b.error ||
-    // Structural compare — the descriptor arrives as a fresh object per
-    // resume/replay, so identity comparison would repaint forever.
-    (a.errorSurface?.layer ?? null) !== (b.errorSurface?.layer ?? null) ||
-    (a.errorSurface?.code ?? null) !== (b.errorSurface?.code ?? null) ||
-    (a.errorSurface?.retryable ?? null) !== (b.errorSurface?.retryable ?? null) ||
-    a.hidden !== b.hidden ||
-    a.branchGroupId !== b.branchGroupId ||
-    a.timestamp !== b.timestamp ||
-    a.completedAt !== b.completedAt ||
-    // Interim gates the action footer, so flipping it must repaint (e.g. a
-    // previewed final settling onto a sealed interim bubble restores the bar).
-    (a.interim ?? false) !== (b.interim ?? false) ||
-    !chatReactionsEquivalent(a.reactions, b.reactions)
-  ) {
-    return false
-  }
-
-  if (a.parts.length !== b.parts.length) {
-    return false
-  }
-
-  return a.parts.every((part, index) => chatPartsEquivalent(part, b.parts[index]))
-}
-
-export function chatMessageArraysEquivalent(a: ChatMessage[], b: ChatMessage[]): boolean {
-  // Array-level identity fast-path (same reference)
-  if (a === b) {
-    return true
-  }
-
-  return a.length === b.length && a.every((message, index) => chatMessagesEquivalent(message, b[index]))
 }
 
 /**
@@ -864,39 +645,7 @@ export function preserveLocalPendingTurnMessages(
   const nextIds = new Set(nextMessages.map(message => message.id))
   const previousRoleCounts = new Map<ChatMessage['role'], number>()
 
-  const newestOptimisticUser = [...previousMessages]
-    .reverse()
-    .find(message => message.role === 'user' && message.id.startsWith('user-'))
-
-  // A mid-turn redirect inserts its correction as a second optimistic user row
-  // directly before the live reply, so one turn can own a contiguous RUN of
-  // them. Preserving only the newest keeps the correction and drops the prompt
-  // that started the turn. Widen to the run — but only the contiguous one: any
-  // `user-*` row separated by an assistant reply is stale post-compression
-  // history, which is what the newest-only rule exists to discard.
-  const liveOptimisticUsers = new Set<ChatMessage>()
-
-  if (newestOptimisticUser) {
-    for (let index = previousMessages.indexOf(newestOptimisticUser); index > acknowledged.localIndex; index -= 1) {
-      const candidate = previousMessages[index]
-
-      if (candidate.role === 'user' && candidate.id.startsWith('user-')) {
-        liveOptimisticUsers.add(candidate)
-
-        continue
-      }
-
-      // Arrival-ordered mid-turn corrections sit BELOW the sealed live output
-      // (#73793): a live-tail assistant row between the prompt and its
-      // correction is still the same turn's run. Only a committed reply ends
-      // it — that is the post-compression staleness the rule exists to catch.
-      if (candidate.role === 'assistant' && isLiveTailRow(candidate)) {
-        continue
-      }
-
-      break
-    }
-  }
+  const liveOptimisticUsers = liveOptimisticUserRun(previousMessages, acknowledged.localIndex)
 
   // #121088: the acknowledged prompt's committed twin can sit anywhere in the
   // newly committed window — a compaction handoff or preserved-task notice
@@ -917,6 +666,8 @@ export function preserveLocalPendingTurnMessages(
       !isGatewaySystemMarker(message) &&
       (message.rowId !== undefined || message === newestAuthoritativeUser)
   )
+
+  const contentRefusedCounterparts = refusedPromptCounterparts(nextMessages)
 
   const preserved: ChatMessage[] = []
   // Authoritative id → richer local pending row. Replacing (not appending)
@@ -991,7 +742,7 @@ export function preserveLocalPendingTurnMessages(
       continue
     }
 
-    if (isOptimisticUser && !liveOptimisticUsers.has(message)) {
+    if (isOptimisticUser && optimisticUserAlreadyRepresented(message, liveOptimisticUsers, contentRefusedCounterparts)) {
       continue
     }
 
@@ -1713,6 +1464,8 @@ export function overlayConcurrentMessageChanges(
     )
   }
 
+  const committedNewRow = (message: ChatMessage) => !baselineById.has(message.id) && !isLiveTailRow(message)
+
   const representedOnPage = (current: ChatMessage): boolean =>
     // The page can still carry the row's older streaming copy by id when it
     // was composed from the baseline; the committed row replaces both.
@@ -1761,13 +1514,25 @@ export function overlayConcurrentMessageChanges(
 
       const replacement =
         activationText && !currentText.startsWith(activationText)
-          ? { ...current, parts: [...activationStream.parts, ...current.parts] }
+          ? { ...current, parts: concatPartsByToolCall(activationStream.parts, current.parts) }
           : current
 
       nextIndexById.delete(activationStream.id)
       nextIndexById.set(current.id, activationStreamIndex)
       overlaid[activationStreamIndex] = replacement
       activationStreamIndex = -1
+      changed = true
+
+      continue
+    }
+
+    // The page caught this turn's reply committed before its completion
+    // reached the live row: the live row takes that bubble's place.
+    const committedIndex = pageReplyCommittingLiveRow(overlaid, committedNewRow, current, currentMessages)
+
+    if (committedIndex >= 0) {
+      nextIndexById.set(current.id, committedIndex)
+      overlaid[committedIndex] = current
       changed = true
 
       continue
@@ -2173,15 +1938,11 @@ export async function resolveStoredSession(
   return result.status === 'found' ? result.session : undefined
 }
 
-/** `resolveStoredSession` with the verdict kept: with an `ownerRoute`, a
- *  single fail-closed by-id read on that owner (a 404 ⇒ `gone`, anything else
- *  `inconclusive`). WITHOUT an owner, the P10 owner index answers which
- *  profile holds the id (fed by the native /api/profiles/sessions pages,
- *  backfilled once and silently on a confirmed miss): one owner-pinned by-id
- *  read on the named profile, then 404 ⇒ `gone`, miss ⇒ `inconclusive`.
- *  There is no cross-profile fan-out — a session owned by another profile
- *  than the active one is opened by switching profiles, not by probing all
- *  of them. */
+/** `resolveStoredSession` with the ladder's evidence kept: `gone` only when
+ *  every rung answered an explicit session 404 (a 5xx, a network failure or a
+ *  bare 404 from a proxy is `inconclusive`), and — without an owner — only once
+ *  the profile inventory is known, or a single-profile sweep would vouch for
+ *  ids that live on a profile not yet listed (#125678). */
 export async function probeStoredSession(
   storedSessionId: string,
   ownerRoute?: SessionProfileRoute
@@ -2230,55 +1991,80 @@ export async function probeStoredSession(
     }
   }
 
-  // No owner pinned and no cached owning row: P8 removed the cross-profile
-  // sweep, and P10 replaces it with a LOOKUP — the id→profile index fed by
-  // the native /api/profiles/sessions pages. A hit names the owning profile,
-  // so the read stays a SINGLE owner-pinned by-id request (a 404 ⇒ `gone`);
-  // a confirmed miss (surviving a silent backfill) stays `inconclusive` —
-  // never a fan-out, and the session is opened by switching profiles in the
-  // UI instead of probing every profile again.
-  if (cached) {
+  // A row with no owning profile can't route a resume when more than one
+  // profile exists — a resume without a profile lands on whichever gateway is
+  // active (#67603 family, cross-profile open asymmetry). Treat such a hit as
+  // unresolved and fall through to the by-id lookups, which stamp ownership.
+  const multiProfile = $profiles.get().length > 1
+
+  if (cached && (cached.profile?.trim() || !multiProfile)) {
     return { status: 'found', session: cached }
   }
 
-  const indexedProfile = await ensureSessionOwnerIndexed(storedSessionId, defaultOwnerIndexBackfill)
+  // Direct by-id on the active profile — one row lookup, no list scan. Electron
+  // routes an unscoped GET to the primary backend, which may not own the
+  // active profile. A 404 there used to skip that profile in the probes below,
+  // so the session was never found.
+  const activeKey = normalizeProfileKey($activeGatewayProfile.get())
 
-  if (indexedProfile) {
+  try {
+    const session = await getSession(storedSessionId, activeKey)
+
+    // Older backends can omit `profile`; this request targeted the active
+    // profile, so back-fill that rather than caching an unowned row. A present
+    // stamp is preserved for backend compatibility.
+    session.profile ||= activeKey
+
+    upsertResolvedSession(session, storedSessionId, tombstoneGenerationsAtRequestStart)
+
+    return { status: 'found', session }
+  } catch (error) {
+    // Not on the active profile — fall through to the cross-profile probe.
+    recordFailure(error)
+  }
+
+  // Multi-profile only: probe each remaining profile by id (still one cheap
+  // lookup each) rather than pulling every profile's recent sessions. The
+  // first hit carries its owning `profile`, which routes the resume to the
+  // right backend. The active profile was already tried above.
+  const otherProfiles = $profiles
+    .get()
+    .map(profile => normalizeProfileKey(profile.name))
+    .filter(key => key !== activeKey)
+
+  for (const profile of otherProfiles) {
     try {
-      // A bare profile string, not an object scope: sessionReadOwnerPin only
-      // pins a connection when the caller already knows the owner's connection
-      // (object form). The index names the PROFILE only, so the read stays a
-      // single `?profile=<p>` by-id request on the ambient connection — the
-      // P10 contract is "one owner-pinned read on the named profile", never a
-      // connection guess.
-      const session = await getSession(storedSessionId, normalizeProfileKey(indexedProfile))
+      const session = await getSession(storedSessionId, profile)
 
-      session.profile = normalizeProfileKey(indexedProfile)
+      // Same ownership contract: the DESKTOP profile we explicitly probed is
+      // authoritative, whatever the scoped backend stamped (older backends
+      // omit the field; a per-profile remote override strips the alias before
+      // forwarding, so that backend answers as its own "default").
+      session.profile = profile
+
       upsertResolvedSession(session, storedSessionId, tombstoneGenerationsAtRequestStart)
 
       return { status: 'found', session }
     } catch (error) {
+      // Not on this profile; try the next.
       recordFailure(error)
-
-      return { status: allGone ? 'gone' : 'inconclusive' }
     }
   }
 
-  return { status: 'inconclusive' }
+  return { status: allGone && $profiles.get().length > 0 ? 'gone' : 'inconclusive' }
 }
 
 /**
- * The profile that owns a stored session, resolved through
- * `resolveStoredSession`: a pinned owner (single by-id read), the cached
- * row, or the P10 owner-index backfill (one silent unified list page, then a
- * single owner-pinned by-id read). Without any of those it returns
- * undefined — no cross-profile sweep.
+ * The profile that owns a stored session, resolved through the same
+ * cache → active-backend → cross-profile ladder as `resolveStoredSession`.
  *
- * Recovery `session.resume` calls must re-register the conversation on ITS
- * backend, not on whichever profile happens to be live. When the owning
- * profile cannot be determined from the cache, `undefined` propagates and the
- * resume lands on the ambient gateway — a session owned by another profile is
- * opened by switching profiles, not by probing all of them.
+ * Recovery `session.resume` calls (stale runtime id, session-not-found, wedged
+ * loop) must re-register the conversation on ITS backend, not on whichever
+ * profile happens to be live. Omitting the profile lets the gateway fall back to
+ * the launch-profile DB (tui_gateway/server.py), which is how a session bleeds
+ * from one profile into another (#67603, second symptom). A cache-only lookup
+ * misses any session outside the paginated sidebar window, so route through the
+ * resolver, which probes uncached ids across profiles.
  */
 export async function resolveSessionProfile(storedSessionId: null | string): Promise<string | undefined> {
   if (!storedSessionId) {
@@ -2291,15 +2077,13 @@ export async function resolveSessionProfile(storedSessionId: null | string): Pro
 }
 
 /**
- * The OWNER of a stored session, preferring the EXACT route when the resolved
- * row is connection-tagged (unified-list splice, optimistic create row, a
- * carried tag) over its bare profile. Session-scoped RPC dispatch uses this as
- * the async rung after the sync ladder (tile route → hint → row) misses, so a
+ * The OWNER of a stored session through the same cache → active-backend →
+ * cross-profile ladder, preferring the EXACT route when the resolved row is
+ * connection-tagged (unified-list splice, optimistic create row, a carried
+ * tag) over its bare profile. Session-scoped RPC dispatch uses this as the
+ * async rung after the sync ladder (tile route → hint → row) misses, so a
  * registry-owned session never degrades to a profile-only route that dials a
- * different socket than the one holding its runtime. Without a sync-ladder
- * hit, falls back to `resolveStoredSession` — a pinned owner (single by-id
- * read), the cached row, or the P10 owner-index backfill; never a
- * cross-profile sweep.
+ * different socket than the one holding its runtime.
  */
 export async function resolveSessionOwner(storedSessionId: null | string): Promise<SessionOwnerScope> {
   if (!storedSessionId) {
@@ -2355,6 +2139,8 @@ interface ApplyRuntimeInfoOptions {
    * per-session state is unaffected.
    */
   foreground?: boolean
+  /** The backend that produced `info` when it is not the ambient gateway. */
+  owner?: SessionOwnerScope
 }
 
 /** Mirror a session's runtime state into the composer atoms the MAIN pane
@@ -2411,19 +2197,20 @@ function publishRuntimeToComposer(state: SessionRuntimeStatePatch): void {
 }
 
 /** Session-independent side effects of one runtime info snapshot. */
-function reportRuntimeInfoAppState(info: SessionRuntimeInfo): void {
+function reportRuntimeInfoAppState(info: SessionRuntimeInfo, owner: SessionOwnerScope): void {
   if (info.stored_session_id) {
-    reconcilePendingSubmissions(info.stored_session_id, info.pending_submissions,
-      pendingSnapshotFence(info.replay_epoch, info.last_sequence))
+    reconcilePendingSubmissions(
+      info.stored_session_id,
+      info.pending_submissions,
+      pendingSnapshotFence(info.replay_epoch, info.last_sequence)
+    )
   }
 
   // App/profile-level reporting is session-independent — a tile's runtime
   // reports backend skew and credential warnings just as usefully.
   reportBackendContract(info.desktop_contract, info.desktop_protocol)
 
-  if (info.approval_mode !== undefined) {
-    reconcileApprovalModeForProfile($activeGatewayProfile.get(), info.approval_mode)
-  }
+  reconcileOwnerApprovalMode(info, owner)
 
   requestDesktopOnboardingForCredentialWarning(info.credential_warning)
 
@@ -2432,13 +2219,13 @@ function reportRuntimeInfoAppState(info: SessionRuntimeInfo): void {
 
 export function applyRuntimeInfo(
   info: SessionRuntimeInfo | undefined,
-  { foreground = true }: ApplyRuntimeInfoOptions = {}
+  { foreground = true, owner }: ApplyRuntimeInfoOptions = {}
 ): SessionRuntimeStatePatch | null {
   if (!info) {
     return null
   }
 
-  reportRuntimeInfoAppState(info)
+  reportRuntimeInfoAppState(info, owner)
 
   const sessionState: SessionRuntimeStatePatch = {}
 
@@ -2506,10 +2293,8 @@ export function applyRuntimeInfo(
     publishRuntimeToComposer(sessionState)
 
     if (info.usage) {
-      // session.info/session.resume is an authoritative session snapshot, not a
-      // partial live tick. Clear a missing compression count so switching from
-      // a counted session to an older/cold runtime cannot leak the old value.
-      setCurrentUsage(current => ({ ...current, ...info.usage, compressions: info.usage?.compressions }))
+      // session.info/resume is an authoritative snapshot of THIS session: an omitted readout clears.
+      publishSessionUsage(sessionState.usage)
     }
   }
 
@@ -2518,12 +2303,12 @@ export function applyRuntimeInfo(
 
 export function applyStoredSessionPreviewRuntimeInfo(
   stored: { cwd?: null | string; model?: null | string } | undefined,
-  storedSessionId: null | string
+  storedSessionId: null | string,
+  options: { sameSession?: boolean } = {}
 ) {
-  // Compression count is live runtime state, not part of a durable session row.
-  // Drop the previous session's value immediately while the selected runtime
-  // resumes; the authoritative usage snapshot will repopulate it when present.
-  setCurrentUsage(current => ({ ...current, compressions: undefined }))
+  // Compressions, cache-hit rate, t/s: live runtime state — a switch drops them (#146430), a re-resume keeps them.
+  const staleRates = options.sameSession ? {} : { avg_tps: undefined, cache_hit_pct: undefined }
+  setCurrentUsage(current => ({ ...current, ...staleRates, compressions: undefined }))
   // Transient: this is a PREVIEW painted while `session.resume` is still in
   // flight. If the resume is abandoned (user starts a new chat before it
   // returns, or the row is switched away), nothing repairs the selection

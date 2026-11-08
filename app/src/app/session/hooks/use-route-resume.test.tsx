@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { $resumeExhaustedSessionId, setResumeExhaustedSessionId } from '@/store/session'
 import type { SessionProfileRoute } from '@/store/session-request-router'
-import { __resetSessionOwnerIndexForTests, lookupSessionOwnerProfile, recordSessionOwners } from '@/store/session-owner-index'
 import { markSelectionRestore } from '@/store/session-states'
 
 import { useRouteResume } from './use-route-resume'
@@ -41,7 +40,6 @@ interface HarnessProps {
   selectedStoredSessionId: null | string
   selectedStoredSessionIdRef: MutableRefObject<null | string>
   startFreshSessionDraft: (options: boolean | { replaceRoute?: boolean; rotateFreshDraftKey?: boolean }) => unknown
-  activeGatewayProfileKey?: string
 }
 
 function RouteResumeHarness({
@@ -59,7 +57,6 @@ describe('useRouteResume', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
-    __resetSessionOwnerIndexForTests()
   })
 
   it('does not resume stale routed session A while the create guard holds selection on B (#66057)', () => {
@@ -920,128 +917,5 @@ describe('useRouteResume bounded auto-retry after a failed resume', () => {
     }
 
     expect($resumeExhaustedSessionId.get()).toBeNull()
-  })
-
-  describe('P13: bare route id owned by another gateway profile (owner ruling 2026-11-06)', () => {
-    it('drops a cross-profile route into a fresh draft — no resumeSession, no RPC/REST, no retry', () => {
-      recordSessionOwners([{ id: 'session-coder', profile: 'coder' }])
-
-      const resumeSession = vi.fn(async () => undefined)
-      const startFreshSessionDraft = vi.fn()
-
-      const { rerender } = render(
-        <RouteResumeHarness
-          activeSessionId={null}
-          activeSessionIdRef={{ current: null }}
-          creatingSessionRef={{ current: false }}
-          currentView="chat"
-          freshDraftReady={false}
-          gatewayState="open"
-          locationPathname="/session-coder"
-          resumeSession={resumeSession}
-          routedSessionId="session-coder"
-          runtimeIdByStoredSessionIdRef={{ current: new Map<string, string>() }}
-          selectedStoredSessionId={null}
-          selectedStoredSessionIdRef={{ current: null }}
-          startFreshSessionDraft={startFreshSessionDraft}
-          activeGatewayProfileKey="default"
-        />
-      )
-
-      // The gate fired once on mount (routed id on a bare /:sid route, profile
-      // standing on default, index proves it belongs to coder): fail-closed.
-      expect(resumeSession).not.toHaveBeenCalled()
-      expect(startFreshSessionDraft).toHaveBeenCalledTimes(1)
-      expect(startFreshSessionDraft).toHaveBeenCalledWith({ replaceRoute: true, rotateFreshDraftKey: false })
-
-      // While the draft is not yet ready the route re-renders (a tick later
-      // same pathname): the gate stays in front of the resume dispatch — no
-      // arming of the bounded retry on a cross-profile id.
-      rerender(
-        <RouteResumeHarness
-          activeSessionId={null}
-          activeSessionIdRef={{ current: null }}
-          creatingSessionRef={{ current: false }}
-          currentView="chat"
-          freshDraftReady={false}
-          gatewayState="open"
-          locationPathname="/session-coder"
-          resumeSession={resumeSession}
-          routedSessionId="session-coder"
-          runtimeIdByStoredSessionIdRef={{ current: new Map<string, string>() }}
-          selectedStoredSessionId={null}
-          selectedStoredSessionIdRef={{ current: null }}
-          startFreshSessionDraft={startFreshSessionDraft}
-          activeGatewayProfileKey="default"
-        />
-      )
-
-      expect(resumeSession).not.toHaveBeenCalled()
-    })
-
-    it('still resumes when the index names the ACTIVE profile (same-profile ownership)', () => {
-      recordSessionOwners([{ id: 'session-mine', profile: 'default' }])
-
-      const resumeSession = vi.fn(async () => undefined)
-      const startFreshSessionDraft = vi.fn()
-
-      render(
-        <RouteResumeHarness
-          activeSessionId={null}
-          activeSessionIdRef={{ current: null }}
-          creatingSessionRef={{ current: false }}
-          currentView="chat"
-          freshDraftReady={false}
-          gatewayState="open"
-          locationPathname="/session-mine"
-          resumeSession={resumeSession}
-          routedSessionId="session-mine"
-          runtimeIdByStoredSessionIdRef={{ current: new Map<string, string>() }}
-          selectedStoredSessionId={null}
-          selectedStoredSessionIdRef={{ current: null }}
-          startFreshSessionDraft={startFreshSessionDraft}
-          activeGatewayProfileKey="default"
-        />
-      )
-
-      // Owning profile === active profile: the cross-profile gate does not
-      // fire, the plain resume path owns the dispatch.
-      expect(startFreshSessionDraft).not.toHaveBeenCalled()
-      expect(resumeSession).toHaveBeenCalledTimes(1)
-      expect(resumeSession).toHaveBeenCalledWith('session-mine', true)
-    })
-
-    it('an index MISS is not cross-profile evidence — the plain resume still runs', () => {
-      // No row for 'session-unknown': lookupSessionOwnerProfile is undefined.
-      // The window must not start dropping every unknown route into drafts —
-      // that would strand first-open of a genuinely new session on a cold
-      // (un-fed) index.
-      expect(lookupSessionOwnerProfile('session-unknown')).toBeUndefined()
-
-      const resumeSession = vi.fn(async () => undefined)
-      const startFreshSessionDraft = vi.fn()
-
-      render(
-        <RouteResumeHarness
-          activeSessionId={null}
-          activeSessionIdRef={{ current: null }}
-          creatingSessionRef={{ current: false }}
-          currentView="chat"
-          freshDraftReady={false}
-          gatewayState="open"
-          locationPathname="/session-unknown"
-          resumeSession={resumeSession}
-          routedSessionId="session-unknown"
-          runtimeIdByStoredSessionIdRef={{ current: new Map<string, string>() }}
-          selectedStoredSessionId={null}
-          selectedStoredSessionIdRef={{ current: null }}
-          startFreshSessionDraft={startFreshSessionDraft}
-          activeGatewayProfileKey="default"
-        />
-      )
-
-      expect(startFreshSessionDraft).not.toHaveBeenCalled()
-      expect(resumeSession).toHaveBeenCalledTimes(1)
-    })
   })
 })

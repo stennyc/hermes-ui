@@ -28,6 +28,7 @@ import { ReasoningMenuPanel } from '@/app/shell/reasoning-menu-panel'
 import { formatRefValue } from '@/components/assistant-ui/directive-text'
 import { CenteredThreadSpinner } from '@/components/assistant-ui/thread/status'
 import { findGroupOfPane } from '@/components/pane-shell/tree/model'
+import type { TabActionsMenu, TabActionsMenuProps } from '@/components/pane-shell/tree/renderer/track-model'
 import { $layoutTree, closeTreePane, moveTreePane, setTreeGroupTabStrip } from '@/components/pane-shell/tree/store'
 import {
   $workspaceOwnerLabels,
@@ -83,7 +84,7 @@ import { SessionStatusDot } from './session-status-dot'
 import { useSessionTileActions } from './session-tile-actions'
 import { tileOwnerRoute } from './session-tile-owner'
 import { reasoningEffortPending, type SessionView, SessionViewProvider } from './session-view'
-import { SessionContextMenu } from './sidebar/session-actions-menu'
+import { SessionActionsMenu, SessionContextMenu } from './sidebar/session-actions-menu'
 import { lastVisibleMessageIsUser } from './thread-loading'
 
 import { ChatView } from '.'
@@ -92,19 +93,6 @@ const NO_MESSAGES: ChatMessage[] = []
 
 export const WRONG_BACKEND_TILE_ERROR =
   'Wrong backend — this session lives on another connection. Reconnect to that backend to open it.'
-
-// A session whose durable row lives on ANOTHER profile's state.db, but the
-// active gateway routes the resume to the current profile: the gateway 404s
-// (its own state.db has no such row) while the cross-profile probe confirms
-// the session is still alive. Latching a transient, auto-retryable copy
-// ('Session is still available — retry resuming it.') made the gatewayOpen
-// effect clear it on the next render and re-fire the resume effect — an
-// infinite 404 + resolve loop. This copy survives that clear, like
-// WRONG_BACKEND_TILE_ERROR, so the loop stops here; the user can still
-// Retry manually (or switch the active profile, after which a fresh resolve
-// finds the owning profile directly).
-export const CROSS_PROFILE_TILE_ERROR =
-  'Session lives on a different profile — switch the active profile (or reconnect to that backend) to open it.'
 
 export function sessionTileResumeFailure(
   message: string,
@@ -125,7 +113,7 @@ export function sessionTileResumeFailure(
   }
 
   if (durableSessionFound) {
-    return CROSS_PROFILE_TILE_ERROR
+    return 'Session is still available — retry resuming it.'
   }
 
   return 'Session unavailable — you can retry resuming it.'
@@ -573,17 +561,9 @@ export function SessionTilePane({ storedSessionId }: { storedSessionId: string }
   // The gateway (re)opening invalidates any latched error — it likely came
   // from a not-yet-open gateway or the previous connection. Clearing it
   // retriggers the resume effect: one bounded auto-retry per (re)connect,
-  // mirroring the primary path's became-open resync. WRONG_BACKEND /
-  // CROSS_PROFILE are deterministic (they name the real route and cannot
-  // self-heal on a reconnect), so clearing them would just restart the
-  // 404 → resolve → re-latch loop.
+  // mirroring the primary path's became-open resync.
   useEffect(() => {
-    if (
-      gatewayOpen &&
-      tile?.error &&
-      tile.error !== WRONG_BACKEND_TILE_ERROR &&
-      tile.error !== CROSS_PROFILE_TILE_ERROR
-    ) {
+    if (gatewayOpen && tile?.error && tile.error !== WRONG_BACKEND_TILE_ERROR) {
       patchSessionTile(storedSessionId, { error: undefined })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -656,12 +636,6 @@ export function startUnrestoredTileTitleBackfill(lookup = probeStoredSession): (
   // this run before the gateway answers has no durable row yet either.
   const restored = new Set($sessionTiles.get().flatMap(tile => (tile.runtimeId ? [] : [tile.storedSessionId])))
   let stopped = false
-  // A definitive all-profile 404 verdict, remembered per run for the exact
-  // (connection, profile, id) it was measured on. A later reconnect in the
-  // same run skips the per-profile 404 ladder for those ids (the user's open
-  // reference cannot make them alive again without a new local reference);
-  // a gateway switch re-scopes the key, so it re-probes once.
-  const goneVerdicts = new Map<string, Set<string>>()
 
   const run = () => {
     if ($gatewayState.get() !== 'open') {
@@ -684,15 +658,7 @@ export function startUnrestoredTileTitleBackfill(lookup = probeStoredSession): (
 
     const probes = $sessionTiles
       .get()
-      .filter(
-        tile =>
-          !tile.runtimeId &&
-          !tile.workspaceTabTitle &&
-          !tileStoredRow(tile.storedSessionId) &&
-          !goneVerdicts
-            .get(`${$connection.get()?.connectionId ?? ''}::${$activeGatewayProfile.get()}`)
-            ?.has(tile.storedSessionId)
-      )
+      .filter(tile => !tile.runtimeId && !tile.workspaceTabTitle && !tileStoredRow(tile.storedSessionId))
       .map(tile =>
         lookup(tile.storedSessionId, tile.ownerRoute)
           .then(result => {
@@ -711,10 +677,6 @@ export function startUnrestoredTileTitleBackfill(lookup = probeStoredSession): (
               !draft.text.trim() &&
               draft.attachments.length === 0
             ) {
-              const verdictKey = `${$connection.get()?.connectionId ?? ''}::${$activeGatewayProfile.get()}`
-              const remembered = goneVerdicts.get(verdictKey) ?? new Set<string>()
-              remembered.add(tile.storedSessionId)
-              goneVerdicts.set(verdictKey, remembered)
               // Not `closeSessionTile`: a dead id must not sit on the reopen stack.
               discardSessionTile(tile.storedSessionId)
             }
@@ -890,7 +852,7 @@ function useTileMenuRow(storedSessionId: string): {
     }
   }, [])
 
-  const getSnapshot = useCallback(() => {
+  return useSyncExternalStore(subscribe, () => {
     const stored = tileStoredRow(storedSessionId)
     const pinId = stored ? sessionPinId(stored) : storedSessionId
     const title = tileTitle(storedSessionId)
@@ -903,25 +865,10 @@ function useTileMenuRow(storedSessionId: string): {
     }
 
     return cache.current.value
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storedSessionId])
-
-  return useSyncExternalStore(subscribe, getSnapshot)
+  })
 }
 
-/** A session TAB's context menu: the full session verb set (pin, copy id, new
- *  window, branch, rename, archive, delete) — the SAME menu a sidebar row
- *  gets, targeted through the tile delegate (whose verbs are generic over
- *  stored ids, primary included). The wrapper stops the contextmenu from also
- *  opening the zone strip's menu. Shared by tile tabs AND the main tab. */
-export function SessionTabMenu({
-  children,
-  onClose,
-  onHideTabBar,
-  storedSessionId,
-  tabPaneId
-}: {
-  children: React.ReactElement
+interface SessionTabMenuTarget {
   /** Close this tab (tiles; the main tab passes nothing). */
   onClose?: () => void
   /** Hide the zone's tab bar (main tab only — the sticky bar's off switch). */
@@ -929,33 +876,74 @@ export function SessionTabMenu({
   storedSessionId: string
   /** Layout-tree pane id — powers the Close-others/right/all verbs. */
   tabPaneId: string
-}) {
+}
+
+/** The session verbs a TAB offers, wired to the tile delegate (whose verbs are
+ *  generic over stored ids, primary included). One source for the right-click
+ *  menu and the phone picker's button menu, so the two never drift. */
+function useSessionTabActions({ onClose, onHideTabBar, storedSessionId, tabPaneId }: SessionTabMenuTarget) {
   const { pinId, profile, renameable, title } = useTileMenuRow(storedSessionId)
   const pinnedSessionIds = useStore($pinnedSessionIds)
   const pinned = pinnedSessionIds.includes(pinId)
 
+  return {
+    onArchive: () => void sessionTileDelegate()?.archiveSession(storedSessionId),
+    onBranch: () => void sessionTileDelegate()?.branchSession(storedSessionId),
+    onClose,
+    onDelete: () => void sessionTileDelegate()?.deleteSession(storedSessionId),
+    onHideTabBar,
+    onPin: () => (pinned ? unpinSession(pinId) : pinSession(pinId)),
+    pinned,
+    profile,
+    renameable,
+    sessionId: storedSessionId,
+    surface: 'tab' as const,
+    tabPaneId,
+    title
+  }
+}
+
+/** A session TAB's context menu: the full session verb set (pin, copy id, new
+ *  window, branch, rename, archive, delete) — the SAME menu a sidebar row
+ *  gets. The wrapper stops the contextmenu from also opening the zone strip's
+ *  menu. Shared by tile tabs AND the main tab. */
+export function SessionTabMenu({ children, ...target }: SessionTabMenuTarget & { children: React.ReactElement }) {
+  const actions = useSessionTabActions(target)
+
   return (
     <span className="contents" onContextMenu={event => event.stopPropagation()}>
-      <SessionContextMenu
-        onArchive={() => void sessionTileDelegate()?.archiveSession(storedSessionId)}
-        onBranch={() => void sessionTileDelegate()?.branchSession(storedSessionId)}
-        onClose={onClose}
-        onDelete={() => void sessionTileDelegate()?.deleteSession(storedSessionId)}
-        onHideTabBar={onHideTabBar}
-        onPin={() => (pinned ? unpinSession(pinId) : pinSession(pinId))}
-        pinned={pinned}
-        profile={profile}
-        renameable={renameable}
-        sessionId={storedSessionId}
-        surface="tab"
-        tabPaneId={tabPaneId}
-        title={title}
-      >
-        {children}
-      </SessionContextMenu>
+      <SessionContextMenu {...actions}>{children}</SessionContextMenu>
     </span>
   )
 }
+
+/** The same tab menu opened from a button — the phone tab picker, where no
+ *  strip exists to right-click (#145774). */
+function SessionTabActionsMenu({ onOpenChange, open, trigger, ...target }: SessionTabMenuTarget & TabActionsMenuProps) {
+  const actions = useSessionTabActions(target)
+
+  return (
+    <SessionActionsMenu {...actions} align="start" onOpenChange={onOpenChange} open={open}>
+      {trigger}
+    </SessionActionsMenu>
+  )
+}
+
+const hideWorkspaceTabBar = () => {
+  const tree = $layoutTree.get()
+  const group = tree ? findGroupOfPane(tree, 'workspace') : null
+
+  if (group) {
+    setTreeGroupTabStrip(group.id, 'never')
+  }
+}
+
+const workspaceTabTarget = (storedSessionId: string): SessionTabMenuTarget => ({
+  onClose: () => closeTreePane('workspace'),
+  onHideTabBar: hideWorkspaceTabBar,
+  storedSessionId,
+  tabPaneId: 'workspace'
+})
 
 /** The MAIN tab's menu: the same session verbs targeting the primary's loaded
  *  session, plus Close (the tab empties to a fresh draft — the workspace pane
@@ -965,30 +953,26 @@ export function SessionTabMenu({
 export function WorkspaceTabMenu({ children }: { children: React.ReactElement }) {
   const selected = useStore($selectedStoredSessionId)
 
-  const hideTabBar = () => {
-    const tree = $layoutTree.get()
-    const group = tree ? findGroupOfPane(tree, 'workspace') : null
-
-    if (group) {
-      setTreeGroupTabStrip(group.id, 'never')
-    }
-  }
-
   if (!selected) {
     return children
   }
 
-  return (
-    <SessionTabMenu
-      onClose={() => closeTreePane('workspace')}
-      onHideTabBar={hideTabBar}
-      storedSessionId={selected}
-      tabPaneId="workspace"
-    >
-      {children}
-    </SessionTabMenu>
-  )
+  return <SessionTabMenu {...workspaceTabTarget(selected)}>{children}</SessionTabMenu>
 }
+
+/** The main tab's button menu (see `PaneChrome.tabActions`); none on a fresh
+ *  draft, same as the right-click menu. */
+export const workspaceTabActions = (): TabActionsMenu | undefined => {
+  const selected = $selectedStoredSessionId.get()
+
+  return selected ? props => <SessionTabActionsMenu {...props} {...workspaceTabTarget(selected)} /> : undefined
+}
+
+const tileTabTarget = (storedSessionId: string): SessionTabMenuTarget => ({
+  onClose: () => requestCloseSessionTile(storedSessionId),
+  storedSessionId,
+  tabPaneId: `session-tile:${storedSessionId}`
+})
 
 /** Keep pane contributions mirroring `$sessionTiles` (+ titles from
  *  `$sessions`). Tiles dock against main on the chosen edge, flex width. */
@@ -1025,15 +1009,8 @@ export const watchSessionTiles = paneMirror<SessionTile>({
       <SessionDraftTitle scope={storedSessionId} />
     ),
   render: storedSessionId => <SessionTilePane storedSessionId={storedSessionId} />,
-  tabWrap: (storedSessionId, tab) => (
-    <SessionTabMenu
-      onClose={() => requestCloseSessionTile(storedSessionId)}
-      storedSessionId={storedSessionId}
-      tabPaneId={`session-tile:${storedSessionId}`}
-    >
-      {tab}
-    </SessionTabMenu>
-  ),
+  tabWrap: (storedSessionId, tab) => <SessionTabMenu {...tileTabTarget(storedSessionId)}>{tab}</SessionTabMenu>,
+  tabActions: storedSessionId => props => <SessionTabActionsMenu {...props} {...tileTabTarget(storedSessionId)} />,
   // A tile's tab drags like a sidebar row — stack / split / drop-to-link — with
   // its tap (activate) preserved. Always takes the drag.
   tabDrag: (storedSessionId, event, onTap) => {

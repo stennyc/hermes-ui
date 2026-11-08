@@ -9,7 +9,6 @@ import { $connection, $gatewayState, $sessions, setSessions } from '@/store/sess
 import { $sessionTiles, openSessionTile, reopenLastClosedTile, type SessionTile } from '@/store/session-states'
 
 import {
-  CROSS_PROFILE_TILE_ERROR,
   sessionTileResumeFailure,
   shouldResumeSessionTile,
   startTileBackendIdentityGuard,
@@ -35,8 +34,6 @@ function localConnection(): HermesConnection {
     wsUrl: 'ws://127.0.0.1:9119'
   }
 }
-
-const NOT_FOUND = '404: {"detail":"Session not found"}'
 
 describe('shouldResumeSessionTile', () => {
   const live = {
@@ -67,14 +64,10 @@ describe('shouldResumeSessionTile', () => {
 })
 
 describe('sessionTileResumeFailure', () => {
-  it('latches a durable cross-profile session behind the persistent cross-profile error', () => {
-    // A session whose row lives on ANOTHER profile's state.db (durableSessionFound=true)
-    // but the active gateway routes to the current profile: resume 404s. The old
-    // copy ('Session is still available — retry resuming it.') got cleared by the
-    // gatewayOpen effect on the next render, retriggers the resume effect, and loops.
-    // The cross-profile error is treated like WRONG_BACKEND_TILE_ERROR: it survives
-    // the gatewayOpen clear so the loop stops here.
-    expect(sessionTileResumeFailure('session not found', true, true)).toBe(CROSS_PROFILE_TILE_ERROR)
+  it('keeps a confirmed durable session retryable instead of repeating a stale 404', () => {
+    expect(sessionTileResumeFailure('session not found', true, true)).toBe(
+      'Session is still available — retry resuming it.'
+    )
   })
 
   it('fails safe on an inconclusive durable lookup', () => {
@@ -230,36 +223,6 @@ describe('startUnrestoredTileTitleBackfill retires dead tiles (#125678)', () => 
     expect(window.localStorage.getItem('hermes.desktop.sessionTiles.v2') ?? '').not.toContain('dead-chat')
     reopenLastClosedTile()
     expect($sessionTiles.get()).toEqual([])
-  })
-
-  it('skips the per-profile ladder on a same-run reconnect after a definitive gone verdict, and probes again in a new run', async () => {
-    openSessionTile('gone-chat')
-    get.mockRejectedValue(new Error(NOT_FOUND))
-
-    stop = startUnrestoredTileTitleBackfill()
-    $gatewayState.set('open')
-
-    // First run: the full ladder fires and the tile is retired.
-    await vi.waitFor(() => expect($sessionTiles.get()).toEqual([]))
-    expect(get).toHaveBeenCalledTimes(2)
-
-    // Same-run reconnect: the verdict is remembered, no re-probe.
-    get.mockClear()
-    $gatewayState.set('idle')
-    $gatewayState.set('open')
-    await new Promise(resolve => setTimeout(resolve, 0))
-    expect(get).not.toHaveBeenCalled()
-
-    // A NEW run probes again: the verdict lives in the previous closure
-    // instance, and a freshly restored tile with the same id re-arms the
-    // full ladder (e.g. a persisted pane re-registered after the reload).
-    stop()
-    openSessionTile('gone-chat')
-    get.mockReset()
-    stop = startUnrestoredTileTitleBackfill()
-    $gatewayState.set('idle')
-    $gatewayState.set('open')
-    await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(2))
   })
 
   it.each([

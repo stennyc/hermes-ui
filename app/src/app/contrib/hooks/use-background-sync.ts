@@ -6,6 +6,10 @@ import {
   graftRefreshedTailOntoBackfill,
   olderPageReader
 } from '@/app/chat/transcript-backfill'
+import {
+  isSessionRecentlyInterrupted,
+  recentInterruptRemainingMs
+} from '@/app/session/hooks/use-prompt-actions/utils'
 import { sessionCreatedThisRun } from '@/app/session/hooks/use-session-actions/created-this-run'
 import { preserveLocalPendingTurnMessages } from '@/app/session/hooks/use-session-actions/utils'
 import { getLatestSessionMessages, type ProfileScope } from '@/hermes'
@@ -20,14 +24,16 @@ import { createClientSessionState } from '@/lib/chat-runtime'
 import { sessionListFingerprint, sessionMessagesSignature } from '@/lib/session-signatures'
 import { latestSessionTodos, latestSessionTodoSnapshot } from '@/lib/todos'
 import { pendingSessionReplay } from '@/store/gateway'
+import { sharedPrimaryRoute } from '@/store/gateway-shared-route'
 import { $sidebarShowArchived } from '@/store/layout'
 import { $changeEventsAvailable, $cronChangeTick, $projectsChangeTick, $sessionsChangeTick } from '@/store/live-sync'
 import { $onBattery, batteryPollInterval } from '@/store/power'
-import { refreshActiveProfile } from '@/store/profile'
+import { normalizeProfileKey, refreshActiveProfile } from '@/store/profile'
 import { refreshProjects, refreshProjectTree } from '@/store/projects'
 import {
   $activeSessionId,
   $busy,
+  $connection,
   $currentCwd,
   $messagingSessions,
   $selectedStoredSessionId,
@@ -37,6 +43,7 @@ import {
   sessionMatchesStoredId,
   setCurrentCwd
 } from '@/store/session'
+import { $focusedStoredSessionId } from '@/store/session-focus'
 import type { SessionOwnerRoute } from '@/store/session-request-router'
 import {
   $sessionStates,
@@ -46,11 +53,10 @@ import {
   publishSessionState,
   SESSION_WATCHDOG_TIMEOUT_MS,
   setLiveTurnBackend,
-  setSessionStalled,
-  $stalledSessionIds
+  setSessionStalled
 } from '@/store/session-states'
+import { noteLiveSessionSource } from '@/store/session-unread'
 import { loadArchivedSessions } from '@/store/sidebar-archive'
-import { armTranscriptGone, isTranscriptGone } from '@/store/transcript-gone'
 import {
   clearActiveSessionTodos,
   clearSessionTodos,
@@ -61,6 +67,8 @@ import {
 
 import type { ClientSessionState } from '../../types'
 import type { GatewayRequester } from '../types'
+
+import { useLiveWorkRoster } from './use-live-work-roster'
 
 interface ActiveTranscriptSession {
   ownerRoute?: SessionOwnerRoute
@@ -81,25 +89,6 @@ export function profileScopeForTranscriptSession(stored: ActiveTranscriptSession
   }
 
   return stored.profile
-}
-
-/** P6/P7 (owner ruling 2026-11-05): the caller owns the owning-profile choice — the transcript read is a plain pinned read with no cross-profile owner fallback. Pinned reads and non-404 failures propagate untouched. */
-function readTranscriptWithOwnerFallback(
-  id: string,
-  scope: ProfileScope,
-  options: { passive?: boolean } = {}
-): ReturnType<typeof getLatestSessionMessages> {
-  return getLatestSessionMessages(id, scope, options)
-}
-
-/**
- * P12: the REST bridge's session-not-found verdict is a 404 whose message
- * names the session ("404: Session not found" / "no such session"), unlike a
- * route-missing 404. The re-reads only ever 404 on the session row itself,
- * so this is the gone discriminator.
- */
-function isTranscriptReadGone(error: unknown): boolean {
-  return /\b404\b.*not.?found/i.test(String((error as Error)?.message ?? error))
 }
 
 /** Dedupe key for one active transcript's last published page signature. */
@@ -153,10 +142,36 @@ export interface ActiveTranscriptRefreshDeps {
   ) => ClientSessionState
 }
 
+/**
+ * Stop idles the view at the click, but the stopped turn's rows stay unstored
+ * until its interrupted `message.complete` binds the receipt. A page read in
+ * that gap already holds the stored turn, so the merge drew it twice until the
+ * completion landed (#144899 N2). The hold ends with the binding, or with the
+ * Stop cooldown when no receipt ever comes.
+ */
+export function stopAwaitsItsReceipt(state: ClientSessionState, runtimeId: string): boolean {
+  if (!state.interrupted || !isSessionRecentlyInterrupted(runtimeId)) {
+    return false
+  }
+
+  const messages = state.messages
+  const lastUser = messages.findLastIndex(message => message.role === 'user')
+  const lastReply = messages.findLastIndex(message => message.role === 'assistant' && !message.hidden)
+
+  if (lastReply > lastUser) {
+    return !messages[lastReply].persistedTurn
+  }
+
+  return lastUser >= 0 && messages[lastUser].rowId === undefined
+}
+
 function tileRuntimeOwnsLiveState(runtimeId: string): boolean {
   const state = $sessionStates.get()[runtimeId]
 
-  return Boolean(state && (state.busy || state.awaitingResponse || state.needsInput || state.turnLive))
+  return Boolean(
+    state &&
+      (state.busy || state.awaitingResponse || state.needsInput || state.turnLive || stopAwaitsItsReceipt(state, runtimeId))
+  )
 }
 
 /** Backfill/retention may prepend or release a prefix without changing the tail. */
@@ -336,7 +351,7 @@ export async function reconcileTileTranscripts({
 
       // Passive: a hidden tile's refresh must never cold-start its owner
       // backend or hold a pool slot (#103375); no warm backend = retry next tick.
-      const latest = await readTranscriptWithOwnerFallback(storedSessionId, profileScope, { passive: true })
+      const latest = await getLatestSessionMessages(storedSessionId, profileScope, { passive: true })
       const replayAtReturn = pendingSessionReplay(runtimeSessionId)
 
       if (replayAtReturn && !(await replayAtReturn)) {
@@ -423,14 +438,7 @@ export async function reconcileTileTranscripts({
         }),
         storedSessionId
       )
-    } catch (error) {
-      // P12: a confirmed session-not-found retires the re-reads for this id
-      // (list page / gateway switch bring it back; see transcript-gone.ts).
-      // P14 refinement: arm with the tile's own owner scope so a cross-profile
-      // 404 stamps the verdict with owner evidence (survives list pages).
-      if (isTranscriptReadGone(error)) {
-        armTranscriptGone(storedSessionId, profileScope, error)
-      }
+    } catch {
       // Non-fatal: the next change event retries.
     }
   }
@@ -472,7 +480,7 @@ export async function hydrateStoredSessionTranscript({
     }
 
     try {
-      const latest = await readTranscriptWithOwnerFallback(storedSessionId, storedProfile)
+      const latest = await getLatestSessionMessages(storedSessionId, storedProfile)
       const replayAtReturn = pendingSessionReplay(runtimeSessionId)
 
       if (replayAtReturn && !(await replayAtReturn)) {
@@ -544,14 +552,7 @@ export async function hydrateStoredSessionTranscript({
       }
 
       return
-    } catch (error) {
-      // P12: a confirmed session-not-found retires the re-reads for this id
-      // (list page / gateway switch bring it back; see transcript-gone.ts).
-      // P14: arm with the stored owner scope so a cross-profile 404 keeps its
-      // owner evidence and survives list-page refreshes.
-      if (isTranscriptReadGone(error)) {
-        armTranscriptGone(storedSessionId, storedProfile, error)
-      }
+    } catch {
       // Best-effort fallback when live stream payloads are empty.
     }
   }
@@ -588,14 +589,6 @@ export async function reconcileActiveTranscript({
     tileRuntimeOwnsLiveState(runtimeSessionId) ||
     hostsOtherSession()
   ) {
-    return
-  }
-
-  // P12 (A, owner ruling 2026-11-06): a by-id transcript read that 404'd
-  // ("not on this profile right now") is recorded per-id and the re-reads
-  // skip it; a list page that still lists the id retires the verdict. No
-  // N-way re-read cascade on every sessions.changed tick.
-  if (isTranscriptGone(storedSessionId)) {
     return
   }
 
@@ -637,7 +630,7 @@ export async function reconcileActiveTranscript({
   try {
     const profileScope: ProfileScope = profileScopeForTranscriptSession(stored)
 
-    const latest = await readTranscriptWithOwnerFallback(storedSessionId, profileScope)
+    const latest = await getLatestSessionMessages(storedSessionId, profileScope)
     const replayAtReturn = pendingSessionReplay(runtimeSessionId)
 
     if (replayAtReturn && !(await replayAtReturn)) {
@@ -706,16 +699,7 @@ export async function reconcileActiveTranscript({
       }),
       storedSessionId
     )
-  } catch (error) {
-    // P12: a session-not-found verdict retires the re-reads for this id until
-    // a list page lists it again (recordTranscriptAlive) or a gateway switch
-    // wipes the set. Anything else (network / RPC / backend down) stays
-    // retryable — only a 404 is a "gone" claim.
-    // P14: arm with the active pane's resolved owner scope so a cross-profile
-    // 404 keeps its owner evidence (survives list-page refreshes).
-    if (isTranscriptReadGone(error)) {
-      armTranscriptGone(storedSessionId, profileScopeForTranscriptSession(stored), error)
-    }
+  } catch {
     // Non-fatal: the next change event or manual resume can hydrate the view.
   }
 }
@@ -768,6 +752,7 @@ interface LiveSessionStatusItem {
   id?: string
   last_active?: number
   session_key?: string
+  source?: null | string
   status?: 'idle' | 'starting' | 'waiting' | 'working'
 }
 
@@ -840,6 +825,7 @@ export function rehydrateLiveSessionStatuses(
     }
 
     seen.add(runtimeSessionId)
+    noteLiveSessionSource(storedSessionId, session.source, profileKey)
 
     if (working) {
       workingStoredIds.add(storedSessionId)
@@ -903,16 +889,7 @@ export function rehydrateLiveSessionStatuses(
       lastActiveMs > 0 &&
       nowMs - lastActiveMs >= SESSION_WATCHDOG_TIMEOUT_MS
 
-    // No-op polls must stay silent: setSessionStalled republishes the stalled
-    // ids atom whenever membership moves, and the 1.5s live-status poll kept
-    // flipping it back and forth on every tick even when nothing had actually
-    // changed, churning every downstream $sessionStates/$stalledSessionIds
-    // subscriber. Gate on the current set so only a genuine transition writes.
-    const currentlyStalled = $stalledSessionIds.get().includes(storedSessionId)
-
-    if (isQuiet !== currentlyStalled) {
-      setSessionStalled(storedSessionId, isQuiet)
-    }
+    setSessionStalled(storedSessionId, isQuiet)
   }
 
   // A runtime this profile's snapshot reported live LAST poll but not this one
@@ -963,6 +940,38 @@ export function rehydrateLiveSessionStatuses(
   // over, whether or not an earlier poll ever saw its runtime (a turn that
   // started just before the drop was never polled).
   confirmReconnectSettlesExcept(workingStoredIds)
+}
+
+/** Params for the live-status poll. With a session open the session RPC
+ *  dispatcher routes it to that session's owner, so it names nothing. With none
+ *  open it rides the active socket, and a profile that shares the primary socket
+ *  (a Webapp tab's live pick, a native local profile, a global remote) is only
+ *  reached by naming it: the socket answers an unnamed request for its own
+ *  profile, and the sidebar would paint that profile's turns instead of the
+ *  selected one's.
+ *
+ *  The published descriptor is not enough on its own: a reconnect republishes
+ *  the primary's own descriptor (sharedPrimary false, local or remote) while the
+ *  picked profile stays selected. So a descriptor that isn't the selected
+ *  profile's own asks main for the selected profile's route, the check
+ *  requestGatewayForProfile routes by. The selected profile's own descriptor
+ *  asks nothing. */
+async function liveStatusParams(activeGatewayProfile: string): Promise<Record<string, unknown>> {
+  const connection = $connection.get()
+
+  if ($focusedStoredSessionId.get() || !connection) {
+    return {}
+  }
+
+  if (connection.sharedPrimary === true) {
+    return { profile: activeGatewayProfile }
+  }
+
+  const ownSocket =
+    Boolean(connection.profile?.trim()) &&
+    normalizeProfileKey(connection.profile) === normalizeProfileKey(activeGatewayProfile)
+
+  return !ownSocket && (await sharedPrimaryRoute(activeGatewayProfile)) ? { profile: activeGatewayProfile } : {}
 }
 
 /** Forget every profile's live-runtime bookkeeping. A gateway wipe already
@@ -1062,6 +1071,7 @@ export function useBackgroundSync({
   requestGateway,
   updateSessionState
 }: BackgroundSyncParams): void {
+  useLiveWorkRoster()
   const changeEventsAvailable = useStore($changeEventsAvailable)
   const cronChangeTick = useStore($cronChangeTick)
   const activeTranscriptRefreshPendingRef = useRef<string | null>(null)
@@ -1121,6 +1131,20 @@ export function useBackgroundSync({
       $activeSessionId.get() === activeSessionId && $selectedStoredSessionId.get() === activeStoredSessionId
 
     const isLive = () => $busy.get() || tileRuntimeOwnsLiveState(activeSessionId)
+    let stopHoldTimer: null | ReturnType<typeof setTimeout> = null
+
+    // A Stop hold whose receipt never comes ends on the clock, not on a store
+    // write, so wake the observer once the cooldown runs out.
+    const observeWhenStopHoldExpires = () => {
+      const state = $sessionStates.get()[activeSessionId]
+
+      if (stopHoldTimer === null && state && stopAwaitsItsReceipt(state, activeSessionId)) {
+        stopHoldTimer = setTimeout(() => {
+          stopHoldTimer = null
+          observe()
+        }, recentInterruptRemainingMs(activeSessionId) + 1)
+      }
+    }
 
     const observe = () => {
       if (!isCurrent()) {
@@ -1128,6 +1152,8 @@ export function useBackgroundSync({
       }
 
       if (isLive()) {
+        observeWhenStopHoldExpires()
+
         const read = activeTranscriptReadRef.current
 
         if (read?.sessionKey === sessionKey) {
@@ -1166,6 +1192,11 @@ export function useBackgroundSync({
       disposed = true
       unsubscribeState()
       unsubscribeBusy()
+
+      if (stopHoldTimer !== null) {
+        clearTimeout(stopHoldTimer)
+      }
+
       activeTranscriptReadRef.current = null
       activeTranscriptRefreshPendingRef.current = null
     }
@@ -1336,7 +1367,10 @@ export function useBackgroundSync({
       const stateAtRequest = $sessionStates.get()
 
       try {
-        const response = await requestGateway<LiveSessionStatusResponse>('session.active_list', {})
+        const response = await requestGateway<LiveSessionStatusResponse>(
+          'session.active_list',
+          await liveStatusParams(activeGatewayProfile)
+        )
 
         if (!cancelled) {
           rehydrateLiveSessionStatuses(response, Date.now(), activeGatewayProfile, stateAtRequest)
@@ -1500,50 +1534,18 @@ export function useBackgroundSync({
   // Keep the cron-jobs section live without a user action (scheduler ticks in
   // the background). cron.changed (jobs.json moved: CRUD or a scheduler tick's
   // bookkeeping) drives the refresh; the visible poll is the backstop.
-  //
-  // 401/403 breaker: once /api/cron/jobs answers unauthenticated the session
-  // is dead and the poll + focus/visibilitycatch-up handlers keep firing a 401
-  // on every tick. recordCronAuthFailure() arms the breaker on a 401/403 and
-  // the poll stops re-firing until a successful 200 clears it (session
-  // restored) or the effect re-runs on a gatewayState change (fresh
-  // connection). Mirrors the profileAuthFailed breaker in store/profile.ts —
-  // same "401/403 is terminal, not transient" rule, local to this effect
-  // because cron has its own store and no shared flag.
-  function isAuthError(error: unknown): boolean {
-    const status = (error as { status?: number } | null)?.status
-    return status === 401 || status === 403
-  }
-
   useEffect(() => {
     if (gatewayState !== 'open') {
       return
     }
 
-    let cronAuthFailed = false
-
-    const pollCron = () => {
-      if (cronAuthFailed) {
-        return
-      }
-
-      void Promise.resolve(refreshCronJobs()).then((result) => {
-        const res = result as { refreshError?: unknown } | null
-        if (res?.refreshError != null && isAuthError(res.refreshError)) {
-          cronAuthFailed = true
-          console.error('[cron] refreshCronJobs: 401/403 (session expired) — stopping background poll until re-login or gateway switch:', (res.refreshError as Error).message ?? res.refreshError)
-        } else if (res?.refreshError == null) {
-          cronAuthFailed = false
-        }
-      })
-    }
-
     if (cronChangeTick > 0) {
-      pollCron()
+      void refreshCronJobs()
     }
 
     return visiblePoll(
       changeEventsAvailable ? CRON_BACKSTOP_INTERVAL_MS : CRON_POLL_INTERVAL_MS,
-      pollCron
+      () => void refreshCronJobs()
     )
   }, [changeEventsAvailable, cronChangeTick, gatewayState, refreshCronJobs])
 

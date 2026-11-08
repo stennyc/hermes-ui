@@ -21,13 +21,13 @@ import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { ColorSwatches } from '@/components/ui/color-swatches'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import { CopyButton, writeClipboardText } from '@/components/ui/copy-button'
+import { CopyButton } from '@/components/ui/copy-button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { renameSession } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
-import { ArchiveOff, Copy } from '@/lib/icons'
+import { ArchiveOff } from '@/lib/icons'
 import { isSubmitEnter } from '@/lib/ime'
 import { PROFILE_SWATCHES } from '@/lib/profile-color'
 import { exportSession } from '@/lib/session-export'
@@ -53,7 +53,13 @@ import {
   sessionPinId
 } from '@/store/session'
 import { $sessionColorOverrides, setSessionColorOverride } from '@/store/session-color'
-import { $sessionStates, $sessionTiles, closeAllOpenSessionTiles } from '@/store/session-states'
+import { ambientRequestFor } from '@/store/session-gone-latch'
+import {
+  $sessionStates,
+  $sessionTiles,
+  closeAllOpenSessionTiles,
+  requestForOwnedSession
+} from '@/store/session-states'
 import { ackStoredSessionId } from '@/store/session-unread'
 import { canOpenSessionInTerminal, canOpenSessionWindow, openSessionInTerminal } from '@/store/windows'
 
@@ -125,10 +131,14 @@ export async function renameSessionPreferringRpc(
 
   if (title && runtimeId && gateway) {
     try {
-      const result = await gateway.request<SessionTitleResponse>('session.title', {
-        session_id: runtimeId,
-        title
-      })
+      // The runtime lives on its owner's backend; the ambient socket would
+      // refuse a secondary profile's session and drop us to REST.
+      const result = await requestForOwnedSession<SessionTitleResponse>(
+        runtimeId,
+        ambientRequestFor(gateway),
+        'session.title',
+        { session_id: runtimeId, title }
+      )
 
       return { title: result?.title ?? title }
     } catch (err) {
@@ -269,8 +279,6 @@ function useSessionActions({
   const { t } = useI18n()
   const r = t.sidebar.row
   const [renameOpen, setRenameOpen] = useState(false)
-  const [copyFallbackOpen, setCopyFallbackOpen] = useState(false)
-  const [manualCopied, setManualCopied] = useState(false)
   // The rename item opens a Dialog. When a menu closes, Radix restores focus to
   // its trigger — for a sidebar row that trigger is the row's own <button>, so
   // focus lands there instead of the dialog's input: Space then activates the
@@ -559,20 +567,11 @@ function useSessionActions({
       <CopyButton
         appearance={kit.copyAppearance}
         disabled={!sessionId}
+        errorMessage={r.copyIdFailed}
         iconClassName="size-3.5 text-current"
         key={r.copyId}
         label={r.copyId}
-        onCopyError={() => {
-          if (sessionId) {
-            // The dialog's input steals focus from the menu's focus trap;
-            // without this, the trap's close-time focus restore fights the
-            // dialog and the underlying UI is left unclickable until a
-            // refresh (same one-line guard the Rename item already uses).
-            suppressCloseFocusRef.current = true
-            setCopyFallbackOpen(true)
-          }
-        }}
-        silentError
+        onCopyError={err => notifyError(err, r.copyIdFailed)}
         text={sessionId}
       />
       <kit.Separator />
@@ -641,61 +640,7 @@ function useSessionActions({
     />
   )
 
-  const copyFallbackDialog = (
-    <Dialog
-      onOpenChange={(nextOpen) => {
-        setCopyFallbackOpen(nextOpen)
-        if (!nextOpen) {
-          setManualCopied(false)
-        }
-      }}
-      open={copyFallbackOpen}
-    >
-      <DialogContent className="max-w-sm">
-        <DialogHeader>
-          <DialogTitle>{r.copyIdManual}</DialogTitle>
-        </DialogHeader>
-        <p className="text-muted-foreground text-xs">{r.copyIdManualHint}</p>
-        <div className="flex items-center gap-2">
-          <Input
-            aria-label="Session ID"
-            className="flex-1 font-mono"
-            defaultValue={sessionId}
-            onFocus={event => event.currentTarget.select()}
-            readOnly
-          />
-          <Button
-            onClick={async () => {
-              const input = document.querySelector<HTMLInputElement>('input[aria-label="Session ID"]')
-              input?.focus()
-              input?.select()
-              // Try the real write first (genuine selected-text path keeps
-              // working in secure contexts); in the non-secure context the
-              // user's own keyboard Ctrl+C from the now-focused+selected
-              // input is the fallback — either way the value stays reachable.
-              try {
-                await writeClipboardText(sessionId ?? '')
-              } catch {
-                // Non-secure context: the selection is already in place, so
-                // the user's Ctrl+C copies it directly. No error surface
-                // needed here — the dialog IS the affordance.
-              }
-              setManualCopied(true)
-            }}
-            size="icon"
-            variant="outline"
-          >
-            <Copy className="size-4" />
-          </Button>
-        </div>
-        {manualCopied && (
-          <p className="text-muted-foreground text-xs">{t.common.copied}</p>
-        )}
-      </DialogContent>
-    </Dialog>
-  )
-
-  return { copyFallbackDialog, deleteDialog, onCloseAutoFocus, renameDialog, renderItems }
+  return { deleteDialog, onCloseAutoFocus, renameDialog, renderItems }
 }
 
 interface DeleteSessionDialogProps {
@@ -730,13 +675,22 @@ function DeleteSessionDialog({ open, onOpenChange, onConfirm, sessionTitle }: De
 }
 
 interface SessionActionsMenuProps
-  extends SessionActions, Pick<React.ComponentProps<typeof ActionsMenu>, 'align' | 'sideOffset'> {
+  extends
+    SessionActions,
+    Pick<React.ComponentProps<typeof ActionsMenu>, 'align' | 'onOpenChange' | 'open' | 'sideOffset'> {
   children: React.ReactNode
 }
 
-export function SessionActionsMenu({ children, align = 'end', sideOffset = 6, ...actions }: SessionActionsMenuProps) {
+export function SessionActionsMenu({
+  children,
+  align = 'end',
+  onOpenChange,
+  open,
+  sideOffset = 6,
+  ...actions
+}: SessionActionsMenuProps) {
   const { t } = useI18n()
-  const { copyFallbackDialog, deleteDialog, onCloseAutoFocus, renameDialog, renderItems } = useSessionActions(actions)
+  const { deleteDialog, onCloseAutoFocus, renameDialog, renderItems } = useSessionActions(actions)
 
   return (
     <>
@@ -746,13 +700,14 @@ export function SessionActionsMenu({ children, align = 'end', sideOffset = 6, ..
         contentClassName="w-40"
         items={renderItems}
         onCloseAutoFocus={onCloseAutoFocus}
+        onOpenChange={onOpenChange}
+        open={open}
         sideOffset={sideOffset}
       >
         {children}
       </ActionsMenu>
       {renameDialog}
       {deleteDialog}
-      {copyFallbackDialog}
     </>
   )
 }
@@ -763,7 +718,7 @@ interface SessionContextMenuProps extends SessionActions {
 
 export function SessionContextMenu({ children, ...actions }: SessionContextMenuProps) {
   const { t } = useI18n()
-  const { copyFallbackDialog, deleteDialog, onCloseAutoFocus, renameDialog, renderItems } = useSessionActions(actions)
+  const { deleteDialog, onCloseAutoFocus, renameDialog, renderItems } = useSessionActions(actions)
 
   return (
     <>
@@ -777,7 +732,6 @@ export function SessionContextMenu({ children, ...actions }: SessionContextMenuP
       </ActionsContextMenu>
       {renameDialog}
       {deleteDialog}
-      {copyFallbackDialog}
     </>
   )
 }

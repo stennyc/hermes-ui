@@ -22,12 +22,8 @@ function setup() {
   })
   Object.defineProperty(window, 'hermesDesktop', {
     configurable: true,
-    value: { writeClipboard: vi.fn().mockResolvedValue(undefined) }
+    value: { writeClipboard: vi.fn().mockResolvedValue(true) }
   })
-  // An Electron-shaped bridge: present and WITHOUT `terminal` the web
-  // platform probe cannot distinguish, so pin the test to desktop behavior
-  // by giving the bridge a terminal member (isWebPlatform → false).
-  Object.defineProperty((window as unknown as { hermesDesktop: Record<string, unknown> }).hermesDesktop, 'terminal', { value: {}, configurable: true })
   render(
     <MemoryRouter>
       <AppContextMenu />

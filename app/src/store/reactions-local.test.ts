@@ -55,6 +55,7 @@ vi.mock('@/store/session', async () => {
     setMessagingSessions: vi.fn(),
     setMessagingTruncated: vi.fn(),
     setSelectedStoredSessionId: vi.fn(),
+    setSessionProfilesFailed: vi.fn(),
     setSessionProfilesTruncated: vi.fn(),
     setSessionProfilesUsage: vi.fn(),
     setSessions: vi.fn(),
@@ -68,13 +69,14 @@ vi.mock('@/app/right-sidebar/terminal/terminals', () => ({ closeAgentTerminalByP
 vi.mock('@/store/pane-focus', () => ({ applyDesktopLayoutPreset: vi.fn(), revealDesktopPane: vi.fn() }))
 vi.mock('@/store/tips', () => ({ $tipsEnabled: { get: () => false }, agentTipId: vi.fn(), showTip: vi.fn() }))
 vi.mock('@/app/contrib/hooks/use-background-sync', () => ({ resetLiveRuntimeTracking: vi.fn() }))
-vi.mock('@/hermes', () => ({ resetSidebarBatchCapability: vi.fn() }))
+vi.mock('@/hermes', () => ({ resetMutationSnapshotRouteCapability: vi.fn(), resetSidebarBatchCapability: vi.fn() }))
 vi.mock('@/lib/query-client', () => ({ invalidateProfileScopedQueries: vi.fn() }))
 vi.mock('@/store/artifacts', () => ({ clearArtifactRegistry: vi.fn() }))
 vi.mock('@/store/cron', () => ({ invalidateCronJobsRequests: vi.fn(), setCronJobs: vi.fn() }))
 vi.mock('@/store/layout', () => ({ resetSessionsLimit: vi.fn() }))
 vi.mock('@/store/live-sync', () => ({ resetLiveSync: vi.fn() }))
 vi.mock('@/store/session-control', () => ({ clearAllSessionControl: vi.fn() }))
+vi.mock('@/store/session-owner-index', () => ({ resetSessionOwnerIndex: vi.fn() }))
 vi.mock('@/store/session-pin-sync', () => ({ resetSessionPinMirror: vi.fn() }))
 vi.mock('@/store/session-states', async () => {
   const { atom: nanoAtom } = await import('nanostores')
@@ -86,6 +88,7 @@ vi.mock('@/store/session-states', async () => {
 })
 vi.mock('@/store/transcript-tail', () => ({ clearTranscriptTailPaging: vi.fn() }))
 vi.mock('@/store/transcript-tail-cache', () => ({ clearTranscriptTails: vi.fn() }))
+vi.mock('@/store/transcript-gone', () => ({ resetTranscriptGone: vi.fn() }))
 
 const AGENT_THUMBS_UP: MessageReaction[] = [{ at: 1, author: 'agent', emoji: '👍' }]
 const SOURCE_A = 'conn:source-a::default'

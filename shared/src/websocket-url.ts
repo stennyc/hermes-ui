@@ -81,30 +81,16 @@ export async function resolveGatewayWsUrl(deps: ResolveGatewayWsUrlDeps, conn: G
   // The Webapp's descriptor URL carries no credential of its own, so a failed mint IS the answer
   // (a gateway that cannot attach says why); falling back to that URL only fails later, nameless.
   // Every other descriptor falls back to its cached URL and leaves the retry to the reconnect loop.
-  // Fork: mint failures (401/403 -> needsOauthLogin) must NOT be swallowed into the cached
-  // conn.wsUrl either — surface the auth failure so the boot loop's reauth circuit breaker
-  // stops retrying (P-series semantics preserved over the upstream mintRequired gate).
   const mintRequired = nativeDialOf(conn.wsUrl) === BROWSER_NATIVE_DIAL
 
   if (mint) {
-    const fresh = await mint(profile)
-      .then(
-        (result: string | GatewayWsUrlResult) => result,
-        (error: unknown) => {
-          if (isGatewayReauthRequired(error) || mintRequired) {
-            throw error
-          }
+    const fresh = await mint(profile).catch((error: unknown) => {
+      if (mintRequired) {
+        throw error
+      }
 
-          return null
-        }
-      )
-      .catch((error: unknown) => {
-        if (error instanceof GatewayReauthRequiredError || mintRequired) {
-          throw error
-        }
-
-        return null
-      })
+      return null
+    })
 
     if (typeof fresh === 'string') {
       return fresh
@@ -112,13 +98,6 @@ export async function resolveGatewayWsUrl(deps: ResolveGatewayWsUrlDeps, conn: G
 
     if (fresh?.ok) {
       return fresh.wsUrl
-    }
-
-    if (fresh?.needsOauthLogin) {
-      throw new GatewayReauthRequiredError(
-        'Your gateway session has expired. Open Settings -> Gateway and click "Sign in" again.',
-        { cause: new Error(fresh.error ?? 'auth required') }
-      )
     }
 
     if (fresh && mintRequired) {

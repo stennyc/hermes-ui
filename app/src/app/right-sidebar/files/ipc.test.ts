@@ -1,10 +1,8 @@
-
-
 /// <reference types="node" />
 
+import { Buffer } from 'node:buffer'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-vi.mock('buffer', () => ({ Buffer: globalThis.Buffer }))
 
 import type { HermesReadDirEntry, HermesReadDirResult } from '@/global'
 
