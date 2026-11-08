@@ -78,17 +78,20 @@ export async function resolveGatewayWsUrl(deps: ResolveGatewayWsUrlDeps, conn: G
     }
   }
 
+  // The Webapp's descriptor URL carries no credential of its own, so a failed mint IS the answer
+  // (a gateway that cannot attach says why); falling back to that URL only fails later, nameless.
+  // Every other descriptor falls back to its cached URL and leaves the retry to the reconnect loop.
+  // Fork: mint failures (401/403 -> needsOauthLogin) must NOT be swallowed into the cached
+  // conn.wsUrl either — surface the auth failure so the boot loop's reauth circuit breaker
+  // stops retrying (P-series semantics preserved over the upstream mintRequired gate).
+  const mintRequired = nativeDialOf(conn.wsUrl) === BROWSER_NATIVE_DIAL
+
   if (mint) {
-    // Mint failures (401/403 -> needsOauthLogin) must NOT be swallowed into
-    // the cached conn.wsUrl: the cached ticket is dead, and falling back to
-    // it re-arms the reconnect backoff into an endless 401/mint storm.
-    // Surface the auth failure so the boot loop's reauth circuit breaker can
-    // stop retrying (mirrors the oauth branch above).
     const fresh = await mint(profile)
       .then(
         (result: string | GatewayWsUrlResult) => result,
         (error: unknown) => {
-          if (isGatewayReauthRequired(error)) {
+          if (isGatewayReauthRequired(error) || mintRequired) {
             throw error
           }
 
@@ -96,7 +99,7 @@ export async function resolveGatewayWsUrl(deps: ResolveGatewayWsUrlDeps, conn: G
         }
       )
       .catch((error: unknown) => {
-        if (error instanceof GatewayReauthRequiredError) {
+        if (error instanceof GatewayReauthRequiredError || mintRequired) {
           throw error
         }
 
@@ -117,9 +120,24 @@ export async function resolveGatewayWsUrl(deps: ResolveGatewayWsUrlDeps, conn: G
         { cause: new Error(fresh.error ?? 'auth required') }
       )
     }
+
+    if (fresh && mintRequired) {
+      throw new Error(fresh.error || 'Could not mint a gateway WebSocket ticket.')
+    }
   }
 
   return conn.wsUrl
+}
+
+/** The `native_dial` value on the browser-hosted Desktop's own socket URL. */
+export const BROWSER_NATIVE_DIAL = 'browser'
+
+function nativeDialOf(wsUrl: string): null | string {
+  try {
+    return new URL(wsUrl).searchParams.get('native_dial')
+  } catch {
+    return null
+  }
 }
 
 export type WebSocketAuthParam = readonly [name: string, value: string]
@@ -147,7 +165,7 @@ function readWindowLocation(): { host: string; protocol: string } {
   return { host: window.location.host, protocol: window.location.protocol }
 }
 
-function normalizeBasePath(basePath: string | undefined): string {
+export function normalizeBasePath(basePath: string | undefined): string {
   if (!basePath) {
     return ''
   }
