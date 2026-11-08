@@ -271,7 +271,12 @@ export function ModelCatalogMenu({
     // Gateway-first even with no session: a connected (possibly remote)
     // gateway owns the model catalog, including virtual providers the local
     // REST fallback can't know about (#53817).
-    queryFn: (): Promise<ModelOptionsResult> => requestModelOptions({ gateway, profile, request, sessionId })
+    queryFn: (): Promise<ModelOptionsResult> => requestModelOptions({ gateway, profile, request, sessionId }),
+    // retry: false / staleTime: align with use-model-menu-controller's useQuery
+    // (the 503/404 terminal-verdict fix; prevents the invalidate storm) and
+    // hermes-bots/model-picker.tsx's established 120s catalog cache pattern.
+    retry: false,
+    staleTime: 120_000
   })
 
   const loading = modelOptions.isPending && !modelOptions.data

@@ -84,10 +84,17 @@ export function useModelMenuController({
   // peek: with no model in the session store yet, currentPickerSelection falls
   // back to the catalog's reported current, and a non-reactive read would
   // never repaint that fallback once the catalog resolved.
+  // retry: false — a 503 (code-skew guard) or 404 (P14 ownership gate) is a
+  // terminal server verdict, not a transient network hiccup; React Query's
+  // default 3× backoff would multiply every profile/gateway switch's
+  // invalidateProfileScopedQueries() into a retry storm (the 100+ "Fetch
+  // finished loading" lines observed in the console).
   const modelOptions = useQuery({
     queryKey: modelOptionsQueryKey(profile, activeSessionId, ownerConnectionId),
     queryFn: (): Promise<ModelOptionsResult> =>
-      requestModelOptions({ gateway, profile, request: requestGateway, sessionId: activeSessionId })
+      requestModelOptions({ gateway, profile, request: requestGateway, sessionId: activeSessionId }),
+    retry: false,
+    staleTime: 120_000
   })
 
   const { model: optionsModel, provider: optionsProvider } = currentPickerSelection(
