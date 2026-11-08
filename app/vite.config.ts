@@ -440,7 +440,23 @@ export default defineConfig({
       '@hermes/plugin-sdk': path.resolve(__dirname, './src/sdk/index.ts'),
       '@hermes/shared': path.resolve(__dirname, '../shared/src')
     },
-    dedupe: ['react', 'react-dom'],
+    dedupe: [
+      'react',
+      'react-dom',
+      // One physical copy of each shared Radix internal. A duplicated
+      // @radix-ui/react-dismissable-layer (an old nested copy is bundled next
+      // to the hoisted one because sub-packages pin exact older versions) keeps
+      // its OWN module-level `originalBodyPointerEvents` +
+      // `layersWithOutsidePointerEventsDisabled` Set, so when a 1.2.x-powered
+      // layer (Dialog) and a 1.1.x-powered layer (Select/Popover/ContextMenu)
+      // cross-mount in one interaction, one copy restores the body while the
+      // other's restoration is skipped and `document.body` stays stuck at
+      // `pointer-events: none` — the "nothing clickable after picking a
+      // workspace" bug on the web build. Collapsing to one module instance
+      // makes the disable/restore logic a single authority again.
+      '@radix-ui/react-dismissable-layer',
+      '@radix-ui/react-presence',
+    ],
     // Vite's DEFAULT extension order tries `.js` before `.tsx`/`.ts`, so a
     // bare `./plugin` import in a folder that has BOTH `plugin.js` and
     // `plugin.tsx` resolves to the `.js`. hermes-bots is exactly that case:

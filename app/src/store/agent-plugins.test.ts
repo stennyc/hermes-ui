@@ -82,6 +82,10 @@ describe('isDesktopRelevantPlugin (#98861)', () => {
   it('hides ordinary built-ins but always lists user installs', () => {
     expect(isDesktopRelevantPlugin(row({ key: 'platforms/discord', source: 'bundled' }))).toBe(false)
 
+    // Manageable bundled keys stay visible (owner-added env-brief, #98861 curation).
+    expect(isDesktopRelevantPlugin(row({ key: 'env-brief', source: 'bundled' }))).toBe(true)
+    expect(isDesktopRelevantPlugin(row({ key: 'disk-cleanup', source: 'bundled' }))).toBe(true)
+
     // User installs are unaffected either way.
     expect(isDesktopRelevantPlugin(row({ key: 'my-plugin', source: 'user' }))).toBe(true)
   })

@@ -286,6 +286,10 @@ function PackageRow({
   const desktopOn = desktop ? desktop.status !== 'disabled' : false
   const agentOn = agent?.status === 'enabled'
   const agentToggleable = Boolean(agent?.key)
+  // env-brief is system-level (owner ruling 2026-11-08): it may be viewed on
+  // this page but never toggled — the data file is the only control surface.
+  // (true = switch is disabled/read-only for this plugin)
+  const agentLockedToggle = agent?.key === 'env-brief'
   // Only what lives under the profile's plugins dir ("user", or "git" when it
   // was cloned there) can be uninstalled here: bundled plugins are refused by
   // the backend and entrypoint (pip-installed) ones go with their package.
@@ -488,7 +492,14 @@ function PackageRow({
                 </Button>
               )}
               {busy && <Loader2 className="size-3.5 animate-spin text-(--ui-text-tertiary)" />}
-              {agentToggleable ? (
+              {agentLockedToggle ? (
+                // Read-only lock view (env-brief): shown but never toggled.
+                <Tip label={p.legacyBackend}>
+                  <span>
+                    <Switch aria-label={`${p.halfAgent}: ${pkg.name}`} checked={agentOn} disabled />
+                  </span>
+                </Tip>
+              ) : agentToggleable ? (
                 <Switch
                   aria-label={`${p.halfAgent}: ${pkg.name}`}
                   checked={agentOn}

@@ -143,6 +143,19 @@ export function RemoteFolderPicker() {
   }
 
   const close = (paths: string[] = []) => {
+    // A nested Radix module copy (pre-dedupe builds ship two physical
+    // `react-dismissable-layer` instances, each keeping its own
+    // `originalBodyPointerEvents` + layer Set) can skip the body restore on
+    // dismiss, leaving the whole UI under `body { pointer-events: none }`
+    // until the next reload. This is a belt-and-suspenders reset for that
+    // class of leak: the picker's own scrim/content already handle the normal
+    // path, and clearing the inline value is a no-op when nothing is stuck.
+    // Deferred to the next frame so Radix's own (correct) unmount-time
+    // restore, if it runs, settles first and we only rescue the broken case.
+    requestAnimationFrame(() => {
+      document.body.style.pointerEvents = ''
+    })
+
     pending?.resolve(paths)
     setPending(null)
     setEntries([])
