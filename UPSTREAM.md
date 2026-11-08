@@ -26,8 +26,8 @@ Keep local modifications minimal and centralized in `src/web-bridge/` so upstrea
 This is the running watermark for incremental upstream syncs.
 When you sync, always diff upstream `apps/desktop/src` + `apps/shared/src` from the **Last synced commit** below forward, port the web-applicable changes, then bump the watermark.
 
-- **Last synced upstream commit:** `d0288be5b3330d2442e3907185b8e9d0958297bb` = `d0288be5b3` (v2026.9.24).
-- **Last sync date:** 2026-10-01.
+- **Last synced upstream commit:** `4eddbdb929` (upstream main, post v0.23.0; Nov 2026 sync B1–B6).
+- **Last sync date:** 2026-11-08.
 - **Baseline before this sync:** `f0aae14` (previous watermark; see 2026-07-20 entry).
 - **Exception track (unmoved):** the Bot Mode port of `contrib/` + `plugins/hermes-bots/` was already at `v2026.8.18` (`e624e9f`); this sync advanced only the D2-safe slice (2 self-contained group modules, B5). The 8-screen-* / 3 shared group files still track the 8.18-era plugin-SDK surface until the D2 SDK upgrade (see 2026-10-01 B5 entry).
 
