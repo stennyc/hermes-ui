@@ -145,6 +145,42 @@ describe('writeClipboard fallback', () => {
 
     await expect(bridge.writeClipboard('lost')).resolves.toBe(false)
   })
+
+  it('prefers the native Clipboard API when it is available', async () => {
+    const execCommand = vi.fn(() => false) // selection path would fail
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
+
+    const nativeWriteText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: nativeWriteText }
+    })
+
+    const bridge = createWebBridge()
+
+    await expect(bridge.writeClipboard('native-wins')).resolves.toBe(true)
+    expect(nativeWriteText).toHaveBeenCalledTimes(1)
+    expect(nativeWriteText).toHaveBeenCalledWith('native-wins')
+    // The scratch-textarea path must not have been needed.
+    expect(execCommand).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the selection path when the native write is rejected', async () => {
+    const execCommand = vi.fn(() => true)
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
+
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: () => Promise.reject(new DOMException('denied', 'NotAllowedError'))
+      }
+    })
+
+    const bridge = createWebBridge()
+
+    await expect(bridge.writeClipboard('fallback-wins')).resolves.toBe(true)
+    expect(execCommand).toHaveBeenCalledWith('copy')
+  })
 })
 
 describe('readClipboard', () => {
