@@ -16,6 +16,7 @@ import { embeddedImageUrls, textWithoutEmbeddedImages } from '@/lib/embedded-ima
 import { parseErrorSurface } from '@/lib/error-surface'
 import { isMessagingSource, normalizeSessionSource } from '@/lib/session-source'
 import { isLiveTailReplyId } from '@/lib/spoken-reply'
+import { readJson, writeJson } from '@/lib/storage'
 import { requestDesktopOnboardingForCredentialWarning } from '@/store/onboarding'
 import { pendingSnapshotFence, reconcilePendingSubmissions } from '@/store/pending-submissions'
 import { $activeGatewayProfile, $profiles, normalizeProfileKey } from '@/store/profile'
@@ -97,6 +98,40 @@ export {
   chatReactionsEquivalent
 } from './message-equivalence'
 export { goneSessionVerdict, isSessionGoneError, resolveResumedBusy } from './resume-verdicts'
+import { isSessionGoneError as _isSessionGoneError } from './resume-verdicts'
+
+// ── Persistent by-id gone-latch (B) ───────────────────────────────────────
+// A stored session id whose by-id reads 404 on every registered profile is
+// latched here (localStorage, survives reload) so the owner ladder stops
+// re-firing the cross-profile by-id probe on every change event. The probe's
+// own `recordFailure` gate is `/\b404\b/ && /session not found/i` (Electron
+// backend wording); the web bridge's by-id 404 is `"404: {…}"`, which that
+// double test never matches, so the ladder kept judging `inconclusive` and
+// re-probed forever. We latch on `isSessionGoneError` instead (single 404
+// test) and re-open the latch when a by-id read for the id succeeds.
+const _byIdGoneLatchKey = 'hermes.desktop.byIdGoneLatch.v1'
+
+export function byIdGoneLatchHit(storedSessionId: string): boolean {
+  return Boolean(readJson<string[]>(_byIdGoneLatchKey)?.includes(storedSessionId))
+}
+
+export function byIdGoneLatchArm(storedSessionId: string): void {
+  const rows = readJson<string[]>(_byIdGoneLatchKey) ?? []
+
+  if (!rows.includes(storedSessionId)) {
+    writeJson(_byIdGoneLatchKey, [...rows, storedSessionId])
+  }
+}
+
+export function byIdGoneLatchClear(storedSessionId: string): void {
+  const rows = readJson<string[]>(_byIdGoneLatchKey)
+
+  if (!rows) {
+    return
+  }
+
+  writeJson(_byIdGoneLatchKey, rows.filter(id => id !== storedSessionId))
+}
 
 function withAppendedText(message: ChatMessage, suffix: string): ChatMessage {
   let appended = false
@@ -1947,11 +1982,21 @@ export async function probeStoredSession(
   storedSessionId: string,
   ownerRoute?: SessionProfileRoute
 ): Promise<StoredSessionProbe> {
+  // Persistent latch short-circuit (B): a by-id 404 on every registered
+  // profile is sticky across reloads, so a latched id never re-fires the whole
+  // cross-profile sweep this tick. A live by-id read for the id clears it.
+  if (byIdGoneLatchHit(storedSessionId)) {
+    return { status: 'gone' }
+  }
+
   let allGone = true
 
   const recordFailure = (error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error ?? '')
-    allGone &&= /\b404\b/.test(message) && /session not found/i.test(message)
+    // Single 404 test (superset of the old `/\b404\b/ && /session not found/i`
+    // double test): the web bridge's by-id 404 is `"404: {…}"`, which the
+    // double test never matched and so the ladder kept judging `inconclusive`
+    // and re-probed forever. The Electron 404 still matches unchanged.
+    allGone &&= _isSessionGoneError(error)
   }
 
   // Snapshot BEFORE any await: a resolve that started before an archive/delete
@@ -1980,12 +2025,17 @@ export async function probeStoredSession(
       session.profile = normalizeProfileKey(ownerRoute.profile)
       session.connection_id = ownerRoute.connectionId
       upsertResolvedSession(session, storedSessionId, tombstoneGenerationsAtRequestStart)
+      byIdGoneLatchClear(storedSessionId) // a live read re-opens a latched id
 
       return { status: 'found', session }
     } catch (error) {
       // An explicit owner is fail-closed. Probing the ambient or another
       // profile would turn a stale route into a cross-connection open.
       recordFailure(error)
+
+      if (allGone) {
+        byIdGoneLatchArm(storedSessionId)
+      }
 
       return { status: allGone ? 'gone' : 'inconclusive' }
     }
@@ -2016,6 +2066,7 @@ export async function probeStoredSession(
     session.profile ||= activeKey
 
     upsertResolvedSession(session, storedSessionId, tombstoneGenerationsAtRequestStart)
+    byIdGoneLatchClear(storedSessionId)
 
     return { status: 'found', session }
   } catch (error) {
@@ -2043,6 +2094,7 @@ export async function probeStoredSession(
       session.profile = profile
 
       upsertResolvedSession(session, storedSessionId, tombstoneGenerationsAtRequestStart)
+      byIdGoneLatchClear(storedSessionId)
 
       return { status: 'found', session }
     } catch (error) {
@@ -2051,7 +2103,13 @@ export async function probeStoredSession(
     }
   }
 
-  return { status: allGone && $profiles.get().length > 0 ? 'gone' : 'inconclusive' }
+  if (allGone && $profiles.get().length > 0) {
+    byIdGoneLatchArm(storedSessionId)
+
+    return { status: 'gone' }
+  }
+
+  return { status: 'inconclusive' }
 }
 
 /**

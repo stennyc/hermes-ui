@@ -11,7 +11,12 @@ import {
   recentInterruptRemainingMs
 } from '@/app/session/hooks/use-prompt-actions/utils'
 import { sessionCreatedThisRun } from '@/app/session/hooks/use-session-actions/created-this-run'
-import { preserveLocalPendingTurnMessages } from '@/app/session/hooks/use-session-actions/utils'
+import {
+  byIdGoneLatchArm,
+  byIdGoneLatchHit,
+  preserveLocalPendingTurnMessages
+} from '@/app/session/hooks/use-session-actions/utils'
+import { isSessionGoneError } from '@/app/session/hooks/use-session-actions/resume-verdicts'
 import { getLatestSessionMessages, type ProfileScope } from '@/hermes'
 import {
   type ChatMessage,
@@ -342,10 +347,17 @@ export async function reconcileTileTranscripts({
 
       const messagesAtRequest = $sessionStates.get()[runtimeSessionId]?.messages
 
-      // A freshly minted draft tile has no state.db row until the first prompt
+      // A freshly minted draft tile has no state.db row until its first prompt
       // persists it (#123622) — reading its transcript before anything was ever
       // sent only ever 404s.
       if (!messagesAtRequest?.length && sessionCreatedThisRun(storedSessionId)) {
+        continue
+      }
+
+      // A latched by-id gone (B) is sticky: this tile's stored id 404s on every
+      // registered profile, so skip the by-id read this tick instead of
+      // re-firing it. A live read for the id clears the latch.
+      if (byIdGoneLatchHit(storedSessionId)) {
         continue
       }
 
@@ -438,8 +450,13 @@ export async function reconcileTileTranscripts({
         }),
         storedSessionId
       )
-    } catch {
-      // Non-fatal: the next change event retries.
+    } catch (error) {
+      // A by-id 404 latches the id so the owner ladder stops re-firing the
+      // cross-profile by-id read this tick cycle; a transient failure
+      // (network / 5xx) still retries on the next change event.
+      if (isSessionGoneError(error)) {
+        byIdGoneLatchArm(storedSessionId)
+      }
     }
   }
 }
@@ -552,8 +569,13 @@ export async function hydrateStoredSessionTranscript({
       }
 
       return
-    } catch {
-      // Best-effort fallback when live stream payloads are empty.
+    } catch (error) {
+      // A by-id 404 latches the id (stops the attempts loop re-firing the
+      // cross-profile read); a transient failure keeps the best-effort retry.
+      if (isSessionGoneError(error)) {
+        byIdGoneLatchArm(storedSessionId)
+        return
+      }
     }
   }
 }
@@ -699,8 +721,13 @@ export async function reconcileActiveTranscript({
       }),
       storedSessionId
     )
-  } catch {
-    // Non-fatal: the next change event or manual resume can hydrate the view.
+  } catch (error) {
+    // A by-id 404 latches the id so the active-pane re-sync stops re-firing
+    // the cross-profile by-id read; a transient failure still lets the next
+    // change event or manual resume hydrate the view.
+    if (isSessionGoneError(error)) {
+      byIdGoneLatchArm(storedSessionId)
+    }
   }
 }
 
