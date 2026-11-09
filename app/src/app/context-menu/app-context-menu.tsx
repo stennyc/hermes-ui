@@ -141,15 +141,6 @@ function leaveRowTextFieldToBrowser(event: MouseEvent, element: Element | null) 
   }
 }
 
-/** Web host: on the row/menu-trigger path the app never opens a menu — the
- * browser's native one would open instead. Cancel it so no position leaks a
- * native menu (the KB recipe's "无菜单的位置右键完全无反应"). */
-function suppressNativeContextMenu(event: MouseEvent): void {
-  if (hostHas('browserContextMenu')) {
-    event.preventDefault()
-  }
-}
-
 function isLoopbackUrl(url: string): boolean {
   try {
     return LOOPBACK_HOST_RE.test(new URL(url).hostname)
@@ -702,8 +693,11 @@ export function AppContextMenu() {
       if (trigger && !trigger.hasAttribute('data-zone-body')) {
         // A text field in one (the Files tree's inline rename) still keeps the browser's own menu.
         leaveRowTextFieldToBrowser(event, element)
-        // Web host: suppress the native menu when no text-field handler claimed the gesture.
-        suppressNativeContextMenu(event)
+        // Radix owns the whole gesture on its trigger surfaces (statusbar, session
+        // rows, tabs) — leave the default so its menu opens on the web host too.
+        // Radix's own onContextMenu preventDefaults, so the native menu stays
+        // cancelled while the custom (desktop UI) menu still shows.
+        // Bare-shell paths without a Radix menu are suppressed below instead.
 
         return
       }
@@ -756,10 +750,7 @@ export function AppContextMenu() {
 
       // A selection elsewhere in the same pane must not take its bare menu.
       if (!owned && trigger) {
-        // Web host: suppress the native browser menu.
-        if (hostHas('browserContextMenu')) {
-          event.preventDefault()
-        }
+        // Radix owns the gesture; leave the default so its menu opens on the web host.
 
         return
       }
@@ -767,7 +758,10 @@ export function AppContextMenu() {
       // The reaction bubble owns bare right-clicks; a link inside it still
       // opens the link menu.
       if (!owned && element?.closest(`[${CONTEXT_MENU_SKIP_ATTR}]`)) {
-        // Web host: suppress the native browser menu.
+        // No Radix region menu owns this surface on either host. Keep the
+        // native menu the only one — Electron main cancels it via its own
+        // context-menu event; the web host cancels it here so bare right-clicks
+        // stay silent.
         if (hostHas('browserContextMenu')) {
           event.preventDefault()
         }
