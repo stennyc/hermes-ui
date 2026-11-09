@@ -692,6 +692,11 @@ function connection(profile?: string | null): HermesConnection {
     authMode: token ? 'token' : 'oauth',
     token,
     wsUrl: token ? buildTokenWsUrl(token) : '',
+    // Aligned with buildWebRegistry().primary so $activeConnectionId is a
+    // concrete `gw:<id>` instead of null; gatewayForConnectionId resolves a
+    // stale/unknown id back to the active gateway, and the roster's own
+    // capability checks (botOnConnection) key off the same id.
+    connectionId: `gw:${getActiveGateway().id}`,
     logs: [],
     isFullscreen: false,
     nativeOverlayWidth: 0,

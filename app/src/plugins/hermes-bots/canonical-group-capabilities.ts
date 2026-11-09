@@ -186,7 +186,12 @@ export function botOnConnection(bot: RosterRow, connectionId: null | string): bo
   const connection = String(connectionId || '').trim()
 
   if (!connection) {
-    return false
+    // No active connection id (historical web-bridge state, before the
+    // primary connection carried a concrete `gw:<id>`): claim only rows
+    // with NO explicit source annotation — they belong to the window's
+    // own gateway. Rows stamped with a real connectionId, remoteSource,
+    // or route.connectionId belong to another source, not this one.
+    return !bot.connectionId && !bot.remoteSource && !bot.route?.connectionId
   }
 
   const routeAgrees = !bot.route?.connectionId || bot.route.connectionId === connection
