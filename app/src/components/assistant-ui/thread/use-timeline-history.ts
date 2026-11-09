@@ -5,6 +5,7 @@ import { sessionCreatedThisRun } from '@/app/session/hooks/use-session-actions/c
 import { useStoreSelector } from '@/lib/use-session-slice'
 import { $activeGatewayProfile } from '@/store/profile'
 import { $connection, getSessionOwnerHint } from '@/store/session'
+import { $sessionTiles } from '@/store/session-states'
 import { transcriptTailState } from '@/store/transcript-tail'
 
 import { cachedTimelineIndex, fetchTimelineIndex, type TimelineIndex, timelineIndexKey } from './timeline-index'
@@ -22,8 +23,17 @@ export function useTimelineHistory() {
 
   const activeProfile = useStoreSelector($activeGatewayProfile, profile => profile)
 
+  // Full owner ladder for the by-id timeline read (mirrors
+  // resolveActiveTranscriptSession in use-background-sync.ts): the persisted
+  // session tile knows which connection/profile owns this stored session, so
+  // check it before the narrower persisted hint. The bare activeProfile
+  // last-resort scope below is what let a just-opened cross-profile session
+  // 404 its by-id reads before the hint landed.
   const owner = storedId
-    ? getSessionOwnerHint(storedId, connectionId ? { connectionId, profile: activeProfile } : undefined)
+    ? ($sessionTiles
+          .get()
+          .find(tile => tile.storedSessionId === storedId)?.ownerRoute ??
+        getSessionOwnerHint(storedId, connectionId ? { connectionId, profile: activeProfile } : undefined))
     : undefined
 
   const scope = owner

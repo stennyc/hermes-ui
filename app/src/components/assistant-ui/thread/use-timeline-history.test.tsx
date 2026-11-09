@@ -18,7 +18,8 @@ vi.mock('@/api/client', () => ({
 }))
 vi.mock('@/app/chat/session-view', () => ({ useSessionView: () => view }))
 vi.mock('@/store/profile', () => ({ $activeGatewayProfile: atom('default') }))
-vi.mock('@/store/session', () => ({ $connection: atom({ mode: 'local' }), getSessionOwnerHint: () => undefined }))
+vi.mock('@/store/session', () => ({ $connection: atom({ mode: 'local' }), getSessionOwnerHint: () => undefined, $activeSessionId: atom(null) }))
+vi.mock('@/store/session-states', () => ({ $sessionTiles: atom([]) }))
 vi.mock('@/store/transcript-tail', () => ({ pageHonorsLatestOrder: () => true, transcriptTailState: () => undefined }))
 
 const { sessionCreatedThisRun } = vi.hoisted(() => ({ sessionCreatedThisRun: vi.fn(() => false) }))
