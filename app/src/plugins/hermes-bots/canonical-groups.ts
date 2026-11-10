@@ -148,9 +148,14 @@ export type CanonicalRosterProblem = 'groupSize' | 'otherConnection' | 'duplicat
 export function onCanonicalConnection(route: CanonicalGroupRoute, member: GroupMember): boolean {
   const connectionId = member.route?.connectionId ?? member.connectionId
 
+  // The `remoteSource`-without-connection-id leg only fires for a source-scoped
+  // row (one the union enumerated from another connection). A web-bridge local
+  // row carries `remoteSource: true` (stamped by durableGroupChatMembers) but no
+  // `sourceScoped`/route — it belongs to this gateway, so it must not read as
+  // "on another connection".
   return !((connectionId !== undefined && connectionId !== route.connectionId) ||
     (member.connectionId !== undefined && member.connectionId !== route.connectionId) ||
-    (connectionId === undefined && member.remoteSource))
+    (connectionId === undefined && member.sourceScoped && member.remoteSource))
 }
 
 /** The gateway a Bot from another connection joins through, as `groups.capabilities` there names

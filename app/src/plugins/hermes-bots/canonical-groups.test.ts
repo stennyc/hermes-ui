@@ -71,15 +71,26 @@ it('creates only same-authority rosters and dispatches exact advertised attempt 
     { member_id: 'bob', profile: 'bob', handle: 'bob', target: { kind: 'local', profile: 'bob' } }
   ])
 
+  // A source-scoped remote row without a connection id still reads as "on another
+  // connection" and must be refused; but a web-bridge local row carries
+  // `remoteSource: true` (stamped by durableGroupChatMembers) without
+  // `sourceScoped`/route and belongs to this gateway — it seats normally.
   for (const invalid of [
     [{ ...members[0], connectionId: 'source-b' }, members[1]],
-    [{ ...members[0], remoteSource: true, connectionId: undefined }, members[1]],
+    [{ ...members[0], remoteSource: true, sourceScoped: true, connectionId: undefined }, members[1]],
     [{ ...members[0], route: { connectionId: 'source-b', profile: 'alice', targetProfile: 'alice', mode: 'remote' as const } }, members[1]],
     [members[0]], [members[0], members[0]]
   ]) {await expect(createCanonicalGroup(route, 'Team', invalid)).rejects.toThrow()}
 
   expect(host.requestProfile).toHaveBeenCalledTimes(1)
   host.requestProfile.mockClear()
+
+  // A web-bridge local row carries `remoteSource: true` (stamped by
+  // durableGroupChatMembers) without `sourceScoped`/route; it belongs to this
+  // gateway and must seat normally, not be refused as "on another connection".
+  {const localStamp = [{ ...members[0], remoteSource: true, connectionId: undefined }, members[1]]
+    const { room: stamped } = await createCanonicalGroup(route, 'Team', localStamp)
+    expect(stamped.members).toHaveLength(2)}
   const identity = { member_id: 'alice', task_id: 'task:original', execution_generation: 7 }
 
   for (const kind of ['retry', 'discard']) {
