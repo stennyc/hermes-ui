@@ -172,7 +172,8 @@ describe('writeClipboard fallback', () => {
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: {
-        writeText: () => Promise.reject(new DOMException('denied', 'NotAllowedError'))
+        writeText: () => Promise.reject(new DOMException('denied', 'NotAllowedError')),
+        readText: () => Promise.resolve('fallback-wins')
       }
     })
 
@@ -180,6 +181,35 @@ describe('writeClipboard fallback', () => {
 
     await expect(bridge.writeClipboard('fallback-wins')).resolves.toBe(true)
     expect(execCommand).toHaveBeenCalledWith('copy')
+  })
+
+  // execCommand('copy') reports success without touching the system clipboard
+  // in some Chromium builds. Where no read channel exists to prove the write
+  // (non-secure context: navigator.clipboard is undefined), an unproven
+  // success must be reported as failure so the caller's manual-copy affordance
+  // can open instead of a silent lie.
+  it('reports an unproven scratch-textarea success as false when no read channel exists', async () => {
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: () => true })
+    delete (navigator as { clipboard?: unknown }).clipboard
+
+    const bridge = createWebBridge()
+
+    await expect(bridge.writeClipboard('unproven')).resolves.toBe(false)
+  })
+
+  // Where the read API exists, a matching readback proves the write landed.
+  it('proves a scratch-textarea success via a readback when the read API is available', async () => {
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: () => true })
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        readText: () => Promise.resolve('proven-text')
+      }
+    })
+
+    const bridge = createWebBridge()
+
+    await expect(bridge.writeClipboard('proven-text')).resolves.toBe(true)
   })
 })
 
@@ -351,6 +381,16 @@ describe('contextMenuEdit', () => {
     const input = focusedInput('hello world')
 
     input.setSelectionRange(0, 6)
+
+    // The scratch-textarea path reports success via execCommand; proven
+    // only when the read channel confirms the content landed. The selected
+    // slice is input.value.slice(0, 6) = 'hello ' (with the trailing space),
+    // so the readback must contain that exact string.
+    const readText = vi.fn(() => Promise.resolve('hello '))
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText }
+    })
 
     const bridge = createWebBridge()
 

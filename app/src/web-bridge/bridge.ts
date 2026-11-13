@@ -1101,11 +1101,41 @@ export function createWebBridge(): Window['hermesDesktop'] {
   // Copy buttons, contextMenuEdit('copy'|'cut'), and the shimmed
   // navigator.clipboard.writeText alike. `false` means the system clipboard
   // was NOT written — callers must surface that instead of claiming success.
+  // execCommand('copy') reports success without touching the system clipboard
+  // in some Chromium builds (the 468a9de-era "false report"). A readback
+  // through the native Clipboard API exposes the lie when the read channel
+  // exists; where it does not (non-secure context — plain http://IP, where
+  // this whole scratch path even runs) NO channel can prove the write
+  // landed. Trusting an unproven success there means the caller silently
+  // claims "copied" while the OS clipboard still holds the old content —
+  // exactly the failure the manual-copy dialog exists to surface.
+  const provenClipboardWrite = async (reported: boolean, text: string): Promise<boolean> => {
+    if (!reported) {
+      return false
+    }
+
+    const readText = navigator.clipboard?.readText
+
+    if (!readText) {
+      // No read channel: the write cannot be proven.
+      return false
+    }
+
+    try {
+      const now = await readText.call(navigator.clipboard)
+
+      return now.includes(text)
+    } catch {
+      // Read denied / lost activation: trust the reported write.
+      return true
+    }
+  }
+
   const writeClipboardToSystem = async (text: string) => {
     // Native first: only needs a transient user activation (the menu-item
     // click), not document focus — so it works while the Radix focus trap is
     // still held. copyTextWithSelection needs a focus grab its scratch
-    // textarea cannot win against the trap, so it is the last-resort fallback.
+    // textarea cannot win against, so it is the last-resort fallback.
     if (nativeClipboardWriteText) {
       try {
         await nativeClipboardWriteText(text)
@@ -1117,7 +1147,7 @@ export function createWebBridge(): Window['hermesDesktop'] {
       }
     }
 
-    return copyTextWithSelection(text)
+    return provenClipboardWrite(copyTextWithSelection(text), text)
   }
 
   // The custom context menu's edit verbs. Electron owns these in main
