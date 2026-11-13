@@ -3172,6 +3172,8 @@ export const zhOverrides = {
       openInNewTab: '在新标签页中打开',
       openInSplit: '在分屏中打开',
       copyIdFailed: '无法复制会话 ID',
+      copyIdManual: '手动复制会话 ID',
+      copyIdManualHint: '此浏览器无法自动复制。下方 ID 已选中，请用键盘复制。',
 
       sessionActions: '会话操作',
       sessionRunning: '会话运行中',

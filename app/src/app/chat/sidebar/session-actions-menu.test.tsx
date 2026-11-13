@@ -50,6 +50,8 @@ vi.mock('@/i18n', () => ({
           branchFrom: 'Branch from here',
           copyId: 'Copy ID',
           copyIdFailed: 'Failed to copy ID',
+          copyIdManual: 'Copy session ID manually',
+          copyIdManualHint: 'Automatic copy is unavailable in this browser. Select the ID below (it is preselected) and copy it with your keyboard.',
           deleteDesc: (title: string) => `Delete ${title}?`,
           deleteTitle: 'Delete session?',
           deleting: 'Deleting…',
@@ -381,6 +383,69 @@ describe('SessionActionsMenu', () => {
   // background warm timer (PROJECT_TREE_WARM_MS). Opening this submenu before
   // either fires must not silently show "No other projects" forever — it must
   // pull the authoritative tree itself.
+  // Copy ID failure (non-secure browser context: no clipboard channel) must open
+  // the manual-copy dialog — a preselected input the user can Ctrl+C — not just
+  // a toast (the 468a9de-era affordance, restored after the B4 upstream sync
+  // f3a943a dropped it from the app tree while the desktop tree kept it).
+  it('opens the manual-copy dialog when the Copy ID write fails, with the session id preselected', async () => {
+    // Force the write to fail: no window.hermesDesktop, no navigator.clipboard
+    // (jsdom has neither by default in the non-secure test host).
+    const originalClipboard = (navigator as unknown as { clipboard?: unknown }).clipboard
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: undefined
+    })
+
+    renderMenu()
+
+    const trigger = screen.getByRole('button', { name: 'Session actions' })
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: 'mouse' })
+    fireEvent.pointerUp(trigger, { button: 0, pointerType: 'mouse' })
+    fireEvent.click(trigger)
+
+    const copyItem = await screen.findByRole('menuitem', { name: /^copy id$/i })
+    fireEvent.click(copyItem)
+
+    // The dialog opens with the session id preselected in its input.
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toBeTruthy()
+    expect(screen.getByText(/copy session id manually/i)).toBeTruthy()
+    const input = within(dialog).getByRole('textbox')
+    expect(input).toHaveProperty('value', 's1')
+
+    // The dialog's in-dialog copy button reports success (manualCopied) even
+    // when the real write is unavailable — the selection itself is the affordance.
+    const copyButton = within(dialog).getByRole('button', { name: /copy/i })
+    fireEvent.click(copyButton)
+    await waitFor(() => expect(screen.getByText(/copied/i)).toBeTruthy())
+
+    // Restore the clipboard for the remaining tests.
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard })
+  })
+
+  // A successful write must NOT open the dialog (fc8a941: success is trusted,
+  // the dialog is failure-only affordance).
+  it('does not open the manual-copy dialog when the Copy ID write succeeds', async () => {
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText }
+    })
+
+    renderMenu()
+
+    const trigger = screen.getByRole('button', { name: 'Session actions' })
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: 'mouse' })
+    fireEvent.pointerUp(trigger, { button: 0, pointerType: 'mouse' })
+    fireEvent.click(trigger)
+
+    const copyItem = await screen.findByRole('menuitem', { name: /^copy id$/i })
+    fireEvent.click(copyItem)
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('s1'))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   it('refreshes the project tree when the "Move to project" submenu opens', async () => {
     renderMenu()
 
